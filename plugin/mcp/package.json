@@ -1,0 +1,13 @@
+{
+  "name": "claude-tts-mcp",
+  "version": "1.0.0",
+  "description": "Local TTS MCP server for Claude Desktop (SAPI + Dmitry Neural)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

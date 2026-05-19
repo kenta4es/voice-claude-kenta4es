@@ -1,0 +1,25 @@
+{
+  "name": "voice-claude-kenta4es",
+  "version": "1.0.0",
+  "description": "Voice I/O for Claude Desktop on Windows: Claude reads its replies aloud (SAPI Dmitry/Svetlana/Irina), and you dictate with Whisper+Groq. Hotkeys for pause/stop/voice switching included.",
+  "author": {
+    "name": "Kenta4es & Claude"
+  },
+  "license": "MIT",
+  "keywords": [
+    "tts",
+    "stt",
+    "voice",
+    "speech",
+    "sapi",
+    "whisper",
+    "groq",
+    "windows",
+    "autohotkey",
+    "claude-desktop",
+    "mcp",
+    "russian"
+  ],
+  "homepage": "https://github.com/kenta4es/voice-claude-kenta4es",
+  "repository": "https://github.com/kenta4es/voice-claude-kenta4es"
+}
