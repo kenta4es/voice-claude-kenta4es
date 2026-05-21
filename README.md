@@ -3,6 +3,8 @@
 **Talk to Claude. Let Claude talk back.**
 A complete voice I/O stack for Claude Desktop on Windows — dictate with Whisper, hear Claude reply with neural SAPI voices, control playback from system hotkeys that work in any window.
 
+> **RU — кратко:** Полный голосовой стек для Claude Desktop на Windows. Claude читает свои ответы вслух нейронными русскими голосами (Дмитрий, Светлана, Ирина), ты диктуешь голосом через Whisper, а системные горячие клавиши (пауза / стоп / голос / скорость) работают в любом окне, даже когда Claude закрыт. Озвучка идёт **впереди текста** и проговаривает **каждый** шаг работы. Полное русское описание — в разделах ниже (установка, горячие клавиши, важное про preferences).
+
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)
 ![mcp](https://img.shields.io/badge/MCP-claude--tts-purple)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -19,8 +21,17 @@ A complete voice I/O stack for Claude Desktop on Windows — dictate with Whispe
 | **Pause / Stop / Voice / Rate hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/A/C/↑/↓/←/→) that work in any window |
 | **Independent of Claude Desktop** | TTS server autostarts at logon via Scheduled Task — hotkeys keep working when Claude is closed |
 | **Any app can speak too** | Local HTTP API on `127.0.0.1:48329`: `POST /speak`, `GET /toggle-pause`, `GET /voice-set?name=...` |
+| **Narrate multi-step work** | Queue mode — `speak` with `queue=true` (`POST /speak?queue=1`) voices each intermediate step in order without cutting off the previous one |
 
 Russian voices supported out of the box: **Microsoft Dmitry Online**, **Microsoft Svetlana Online** (neural), **Microsoft Irina Desktop** (classic). English voices are supported by switching with `set_voice`.
+
+---
+
+## ⚠️ Important for auto-speak / Важно для автоозвучки
+
+**EN:** For Claude to read **every** reply aloud automatically, the `voice-output` skill must not be overridden by your personal preferences. If you keep a personal preference about voice, make it **match the skill** — it should say *"ALWAYS call `mcp__claude-tts__speak` as the FIRST action of each reply, voice the full reply text, and follow the `voice-output` skill."* A preference like *"speak at the end"* will win over the skill and break speak‑first. For regular **Chat** (not Cowork), also upload the skill via **Settings → Customize → Skills** (Code execution must be enabled in Settings → Capabilities).
+
+**RU:** Чтобы Claude озвучивал **каждый** ответ сам, скилл `voice-output` не должен перебиваться твоими личными preferences. Если держишь в preferences пункт про озвучку — он должен **совпадать со скиллом**: *«ВСЕГДА вызывай `mcp__claude-tts__speak` ПЕРВЫМ действием в ответе, озвучивай весь текст ответа и следуй скиллу `voice-output`»*. Пункт вроде *«озвучивать в конце»* перебьёт скилл и сломает режим «голос впереди текста». Для обычного **Чата** (не Cowork) скилл нужно ещё загрузить через **Settings → Customize → Skills** (в Settings → Capabilities должен быть включён Code execution).
 
 ---
 
