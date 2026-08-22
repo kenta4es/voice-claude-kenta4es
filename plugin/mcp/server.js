@@ -187,8 +187,38 @@ async function applyState() {
 // Non-owner instances skip engine to avoid SAPI state mismatch.
 
 // ---------- helpers ----------
+// Strip everything that is pointless or annoying to hear. Applied centrally so
+// EVERY path benefits: MCP replies, the read-selection hotkey, the VS Code
+// extension and any third-party caller. Reading a URL character by character is
+// the classic offender; so are the tool-usage lines the chat UI renders
+// ("Used Desktop Commander integration", "(3 actions) - 4 notes").
+function sanitizeForSpeech(input) {
+  let t = String(input);
+  t = t.replace(/```[\s\S]*?```/g, ' ');                       // code blocks
+  t = t.replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ');      // "Used X integration"
+  t = t.replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ');
+  t = t.replace(/[·•][^\n]*\b(?:actions?|notes?)\b/gi, ' ');
+  t = t.replace(/\b(?:mcp__|tool_use|tool_result)\S*/g, ' ');   // tool names
+  // Source / reference lists at the end of a reply
+  t = t.replace(/\n[ \t]{0,3}#{0,6}[ \t]*(?:\*\*|__)?(?:источник[аиов]*|sources?|references?)(?:\*\*|__)?[ \t]*:?[ \t]*\n[\s\S]*$/i, '\n');
+  t = t.replace(/\n[ \t]{0,3}#{0,6}[ \t]*(?:\*\*|__)?(?:источник[аиов]*|sources?|references?)(?:\*\*|__)?[ \t]*:[\s\S]*$/i, '\n');
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');                  // images
+  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');                // [text](url) -> text
+  t = t.replace(/\bhttps?:\/\/\S+/gi, ' ');                     // full URLs
+  t = t.replace(/\bwww\.\S+/gi, ' ');
+  t = t.replace(/\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|ru|org|net|io|ai|dev|me|app|co|edu|gov|info|xyz)\b(?:\/\S*)?/gi, ' ');
+  t = t.replace(/[A-Za-z]:\\[^\s)"']+/g, ' ');                  // windows paths
+  t = t.replace(/`([^`]+)`/g, '$1');                            // inline code marks
+  t = t.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  t = t.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+  t = t.replace(/[ \t]{2,}/g, ' ');
+  t = t.replace(/\n{3,}/g, '\n\n');
+  return t.trim();
+}
+
 function speakAsync(text, queue = false) {
-  let payload = text;
+  let payload = sanitizeForSpeech(text);
+  if (!payload) return Promise.resolve('EMPTY');
   if (state.removePunctuationPauses) payload = payload.replace(/\s+/g, ' ');
   const b64 = Buffer.from(payload, 'utf8').toString('base64');
   return sendCmd(`${queue ? 'SPEAKQ' : 'SPEAK'} ${b64}`);
