@@ -53,6 +53,14 @@ function listTranscripts() { const out = []; for (const r of ROOTS) walk(r, out,
 function stripMarkdown(t) {
   return String(t)
     .replace(/```[\s\S]*?```/g, ' ')
+    // Service/UI noise that must never be read aloud: tool-usage summaries
+    // ("Used Desktop Commander integration", "(3 actions) · 4 notes"),
+    // bare domains and file paths.
+    .replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ')
+    .replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ')
+    .replace(/·[^\n]*\b(?:actions?|notes?)\b/gi, ' ')
+    .replace(/\b(?:mcp__|tool_use|tool_result)\S*/g, ' ')
+    .replace(/\b[a-z0-9-]+\.(?:com|ru|org|net|io|ai|dev|me|app)\b(?:\/\S*)?/gi, ' ')
     .replace(/\n[ \t]{0,3}#{0,6}[ \t]*(?:\*\*|__)?(?:источник[аиов]*|использованн\w*\s+источник\w*|sources?|references?)(?:\*\*|__)?[ \t]*:[\s\S]*$/i, '\n')
     .replace(/\n[ \t]{0,3}(?:#{1,6}[ \t]*|\*\*|__)(?:источник[аиов]*|sources?|references?)(?:\*\*|__)?[ \t]*\r?\n[\s\S]*$/i, '\n')
     .replace(/`([^`]+)`/g, '$1')

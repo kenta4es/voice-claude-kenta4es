@@ -121,10 +121,31 @@ manual action.
 
 ---
 
-## 5. Dictation (optional)
+## 5. Dictation — install it, don't just mention it
 
-Follow `docs/whisper-groq-setup.md`. Then apply these settings — each one
-prevents a real failure we hit:
+**Offer this proactively.** The user very likely does not know they need a
+separate app to dictate. Do not skip this section because "it's optional" —
+ask once whether they want to talk instead of type, and if yes, install it for
+them. Do not just hand them a link and walk away.
+
+1. **Install OpenWhispr** — https://openwhispr.com (free, Windows installer).
+   Download it, run the installer, launch the app.
+2. **Get a Groq API key** — https://console.groq.com → *API Keys* → create key.
+   The free tier is enough for everyday dictation. The user must create the
+   account themselves; never type their password or handle the key for them
+   beyond pasting it where they ask.
+3. **Configure in OpenWhispr** → Settings → Speech-to-Text:
+   - engine: **Cloud Providers** → **Groq**
+   - paste the API key
+   - model: **Whisper Large v3 Turbo** (fast) or **Large v3** (more accurate
+     punctuation — switch to it if the user complains about missing periods)
+4. **Set the dictation hotkey** (Settings → Hotkeys) and make sure it does not
+   collide with the voice hotkeys from §3.
+5. **Check the microphone** — Settings → Preferences → Input Device. Pick the
+   real microphone explicitly rather than "Default". Have the user say a test
+   phrase and confirm the transcript matches.
+
+Then apply these settings — each one prevents a real failure we hit:
 
 - **Turn OFF "Enable text cleanup"** (Settings → Language Models). It sends the
   transcript through a second model, which sometimes *answers the user's
