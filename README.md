@@ -3,8 +3,6 @@
 **Talk to Claude. Let Claude talk back.**
 A complete voice I/O stack for Claude Desktop on Windows — dictate with Whisper, hear Claude reply with neural SAPI voices, control playback from system hotkeys that work in any window.
 
-> **RU — кратко:** Полный голосовой стек для Claude Desktop на Windows. Claude читает свои ответы вслух нейронными русскими голосами (Дмитрий, Светлана, Ирина), ты диктуешь голосом через Whisper, а системные горячие клавиши (пауза / стоп / голос / скорость) работают в любом окне, даже когда Claude закрыт. Озвучка идёт **впереди текста** и проговаривает **каждый** шаг работы. Полное русское описание — в разделах ниже (установка, горячие клавиши, важное про preferences).
-
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)
 ![mcp](https://img.shields.io/badge/MCP-claude--tts-purple)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -18,20 +16,17 @@ A complete voice I/O stack for Claude Desktop on Windows — dictate with Whispe
 |---|---|
 | **Claude reads its replies aloud** | MCP server `claude-tts` + skill `voice-output` that Claude calls automatically at the start of every reply |
 | **You dictate to Claude (and any app)** | OpenWhispr + Groq Whisper Large v3 Turbo API — set up once, dictate everywhere |
-| **Pause / Stop / Voice / Rate hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/A/C/↑/↓/←/→) that work in any window |
+| **Read any selected text aloud** *(new in 1.2)* | Select text anywhere → `LCtrl+LAlt+Z`. Works in every app; a VS Code extension adds it to the right-click menu |
+| **Speak / Pause / Stop / Restart hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/X/C/R/↑/↓/←/→) that work in any window |
+| **One-key recovery** *(new in 1.2)* | `LCtrl+LAlt+R` restarts the engine — and the whole stack if the server died — then confirms out loud |
 | **Independent of Claude Desktop** | TTS server autostarts at logon via Scheduled Task — hotkeys keep working when Claude is closed |
 | **Any app can speak too** | Local HTTP API on `127.0.0.1:48329`: `POST /speak`, `GET /toggle-pause`, `GET /voice-set?name=...` |
-| **Narrate multi-step work** | Queue mode — `speak` with `queue=true` (`POST /speak?queue=1`) voices each intermediate step in order without cutting off the previous one |
 
-Russian voices supported out of the box: **Microsoft Dmitry Online**, **Microsoft Svetlana Online** (neural), **Microsoft Irina Desktop** (classic). English voices are supported by switching with `set_voice`.
+Russian voices supported out of the box: **Microsoft Svetlana Online** (neural, **default since 1.2**), **Microsoft Irina Desktop** (classic, offline), plus male options — `BrianMultilingual` / `AndrewMultilingual` (neural) and offline `Microsoft Pavel`. English voices work by switching with `set_voice`.
 
----
+> ⚠️ **`Microsoft Dmitry Online` currently returns silence** — it is an Edge *cloud* voice, and the failure is on the service side, not fixable locally. Details and a 10-second test for any voice: [CHANGELOG](CHANGELOG.md#known-issue-the-dmitry-voice).
 
-## ⚠️ Important for auto-speak / Важно для автоозвучки
-
-**EN:** For Claude to read **every** reply aloud automatically, the `voice-output` skill must not be overridden by your personal preferences. If you keep a personal preference about voice, make it **match the skill** — it should say *"ALWAYS call `mcp__claude-tts__speak` as the FIRST action of each reply, voice the full reply text, and follow the `voice-output` skill."* A preference like *"speak at the end"* will win over the skill and break speak‑first. For regular **Chat** (not Cowork), also upload the skill via **Settings → Customize → Skills** (Code execution must be enabled in Settings → Capabilities).
-
-**RU:** Чтобы Claude озвучивал **каждый** ответ сам, скилл `voice-output` не должен перебиваться твоими личными preferences. Если держишь в preferences пункт про озвучку — он должен **совпадать со скиллом**: *«ВСЕГДА вызывай `mcp__claude-tts__speak` ПЕРВЫМ действием в ответе, озвучивай весь текст ответа и следуй скиллу `voice-output`»*. Пункт вроде *«озвучивать в конце»* перебьёт скилл и сломает режим «голос впереди текста». Для обычного **Чата** (не Cowork) скилл нужно ещё загрузить через **Settings → Customize → Skills** (в Settings → Capabilities должен быть включён Code execution).
+**Installing this for someone else?** Point their Claude at [CLAUDE.md](CLAUDE.md) — a complete, verified, step-by-step install guide written for an AI assistant to execute.
 
 ---
 
@@ -86,9 +81,10 @@ All hotkeys use **Left Ctrl + Left Alt** + key, with physical scan codes so they
 
 | Hotkey | Action | Tooltip |
 |---|---|---|
-| `LCtrl + LAlt + Z` | Toggle pause / resume current speech | "Paused" / "Resumed" / "Nothing playing" |
-| `LCtrl + LAlt + A` | Stop current speech | "Stopped" / "Nothing playing" |
-| `LCtrl + LAlt + C` | System volume mute toggle | "Mute toggle (C)" |
+| `LCtrl + LAlt + Z` | **Speak the selected text** — works in any app | "Читаю выделение: N симв." |
+| `LCtrl + LAlt + X` | Pause / resume current speech | "Paused" / "Resumed" / "Nothing playing" |
+| `LCtrl + LAlt + C` | Stop current speech | "Stopped" / "Nothing playing" |
+| `LCtrl + LAlt + R` | **Restart the engine and recover sound** — press this first whenever it goes quiet | spoken confirmation |
 | `LCtrl + LAlt + ↑ / ↓` | Speech rate + / − | "Rate +" with new value |
 | `LCtrl + LAlt + → / ←` | Cycle Russian voice forward / back | New voice name spoken |
 
@@ -242,7 +238,12 @@ The behavior is enforced by the skill description (`description` field in `SKILL
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/ping` returns nothing / connection refused | Owner server didn't start | `Get-ScheduledTask 'VoiceClaudeKenta4es'` — state should be Ready. Then `Start-ScheduledTask -TaskName 'VoiceClaudeKenta4es'`. Check `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` lists at least one server.js |
-| `speak` returns `Speaking N chars` but you hear nothing | System mute (Ctrl+Alt+C toggled it) or wrong audio output device | Check the speaker icon in tray — un-mute if X is shown. Verify Windows default playback device |
+| `speak` returns `Speaking N chars` but you hear nothing | **Most common issue.** Either the voice itself produces no audio (see the Dmitry note above), or the engine is bound to an audio device that is no longer the default | Press **`Ctrl+Alt+R`** — this fixes it in most cases. Still silent? Run the 10-second WAV test from the [CHANGELOG](CHANGELOG.md#known-issue-the-dmitry-voice) and switch `voice.txt` to a voice that produced real audio |
+| Sound works right after `Ctrl+Alt+R`, then dies again | The selected voice is unreliable — typically a cloud voice failing server-side | Switch to a verified voice in `plugin/mcp/voice.txt` (`Svetlana` is the tested default) |
+| The voice changes by itself (e.g. to Irina) | Only in ≤1.1: the server probed the internet at startup and silently fell back to the offline voice — the probe fails whenever a VPN is up | Fixed in 1.2: the configured voice is applied as-is |
+| Dictation returns "Thank you", English words, or your dictionary entries | The microphone captured silence — Whisper then repeats its prompt (your dictionary) or hallucinates | Check the mic level and connection, keep the dictionary tiny, disable "Auto-learn from corrections" |
+| Dictation returns text that *answers* your question instead of transcribing it | OpenWhispr's "Enable text cleanup" sends the transcript through a second model, which sometimes replies instead of cleaning | Turn it off: Settings → Language Models → Dictation Cleanup |
+| Dictation error `403 Forbidden` | The API rejects the VPN exit IP | Reconnect the VPN, change country, or turn it off |
 | `speak` works but pause does nothing | Two server.js instances split between MCP and HTTP (architecture mismatch) | Kill all `node.exe` with `*server.js*`, restart Claude Desktop. Owner re-elects on first listen. This was the root bug the architecture fixes |
 | Whisper transcribes "you", "Thank you", random English | Auto-detect picks EN on near-silence | Set OpenWhispr language to Russian explicitly (see `docs/whisper-groq-setup.md`) |
 | AHK hotkey tooltip appears but speech keeps going | Engine ignored pause (rare on OneCore voices; usually means mismatch from previous issue) | Same fix as above — kill duplicate node, restart |

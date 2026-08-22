@@ -1,7 +1,7 @@
 {
   "name": "voice-claude-kenta4es",
-  "version": "1.0.0",
-  "description": "Voice I/O for Claude Desktop on Windows: Claude reads its replies aloud (SAPI Dmitry/Svetlana/Irina), and you dictate with Whisper+Groq. Hotkeys for pause/stop/voice switching included.",
+  "version": "1.2.0",
+  "description": "Voice I/O for Claude Desktop on Windows: Claude reads its replies aloud (SAPI neural voices), you dictate with Whisper+Groq, and any selected text can be read aloud from any window. Hotkeys for speak-selection / pause / stop / one-key recovery included.",
   "author": {
     "name": "Kenta4es & Claude"
   },

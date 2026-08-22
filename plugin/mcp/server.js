@@ -15,6 +15,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
+import net from 'node:net';
 
 const PSDIR = 'C:\\ClaudeTTS';
 mkdirSync(PSDIR, { recursive: true });
@@ -130,9 +131,54 @@ async function waitReady(timeoutMs = 5000) {
 }
 
 // apply state on startup
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// TCP-connect probe to a public host — true if the network is reachable.
+function internetUp(timeout = 3000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const s = net.connect(443, '8.8.8.8');
+    const fin = (v) => { if (!done) { done = true; try { s.destroy(); } catch {} resolve(v); } };
+    s.setTimeout(timeout);
+    s.on('connect', () => fin(true));
+    s.on('timeout', () => fin(false));
+    s.on('error', () => fin(false));
+  });
+}
+
 async function applyState() {
   await waitReady();
-  await sendCmd(`VOICE ${state.voice}`);
+  const desired = state.voice;
+  // Do NOT auto-fallback to the offline voice any more. The internet probe
+  // fails whenever the VPN is up, so the engine kept silently switching to
+  // "Irina" on startup - the user would suddenly hear a different voice.
+  // The preferred voice is applied as-is; if it ever misbehaves, Ctrl+Alt+R
+  // restarts the engine.
+  const isOnline = false;
+  if (isOnline) {
+    // Online (cloud) voices are silent without internet. At logon the engine can
+    // start before the network is up, caching a "mute" voice. So wait for the
+    // network first; if it never comes, fall back to an offline voice and keep
+    // retrying to upgrade back to the desired online voice once we're online.
+    let online = false;
+    for (let i = 0; i < 20 && !online; i++) {
+      online = await internetUp();
+      if (!online) await sleep(3000);
+    }
+    if (online) {
+      await sendCmd(`VOICE ${desired}`);
+    } else {
+      await sendCmd(`VOICE Microsoft Irina Desktop`);
+      const timer = setInterval(async () => {
+        if (await internetUp()) {
+          clearInterval(timer);
+          await sendCmd(`VOICE ${desired}`);
+        }
+      }, 10000);
+    }
+  } else {
+    await sendCmd(`VOICE ${desired}`);
+  }
   await sendCmd(`RATE ${state.rate}`);
   await sendCmd(`VOLUME ${state.volume}`);
 }
@@ -141,11 +187,11 @@ async function applyState() {
 // Non-owner instances skip engine to avoid SAPI state mismatch.
 
 // ---------- helpers ----------
-function speakAsync(text) {
+function speakAsync(text, queue = false) {
   let payload = text;
   if (state.removePunctuationPauses) payload = payload.replace(/\s+/g, ' ');
   const b64 = Buffer.from(payload, 'utf8').toString('base64');
-  return sendCmd(`SPEAK ${b64}`);
+  return sendCmd(`${queue ? 'SPEAKQ' : 'SPEAK'} ${b64}`);
 }
 
 function listVoicesPS() {
@@ -206,15 +252,16 @@ async function adjustRate(delta) {
 const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   // POST /speak with body = text to speak
-  if (req.method === 'POST' && req.url === '/speak') {
+  if (req.method === 'POST' && req.url.startsWith('/speak')) {
+    const queue = new URL(req.url, 'http://127.0.0.1').searchParams.get('queue') === '1';
     let body = '';
     req.setEncoding('utf8');
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
       const text = body.trim();
       if (!text) { res.statusCode = 400; res.end('empty'); return; }
-      speakAsync(text);
-      res.end(`Speaking ${text.length} chars`);
+      speakAsync(text, queue);
+      res.end(`Speaking ${text.length} chars${queue ? ' (queued)' : ''}`);
     });
     return;
   }
@@ -322,11 +369,12 @@ const TOOLS = [
   {
     name: 'speak',
     description:
-      'Speak the given text aloud using the configured voice. Call this at the END of every assistant reply that has user-facing text in Russian or English, passing the full reply text. Long replies are spoken async.',
+      'Speak text aloud. Call as the FIRST action of a reply so the voice leads the on-screen text (NOT at the end). Pass the full reply text with markdown/code/file-paths stripped — it must match what you write to the user. Set queue=true to APPEND after the current speech instead of interrupting it (use for narrating intermediate steps within one reply); omit/false interrupts previous speech (normal single reply). Long replies are spoken async.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Text to speak.' },
+        queue: { type: 'boolean', description: 'If true, append after current speech without interrupting. Default false.' },
       },
       required: ['text'],
     },
@@ -363,13 +411,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     switch (name) {
       case 'speak': {
         const text = String(args.text || '').trim();
+        const queue = args.queue === true;
         if (!text) return { content: [{ type: 'text', text: 'empty text, skipped' }] };
         if (isHttpOwner) {
-          speakAsync(text); // fire and forget
+          speakAsync(text, queue); // fire and forget
         } else {
-          try { await forwardHttp('POST', '/speak', text); } catch (e) { return { content: [{ type: 'text', text: `forward error: ${e.message}` }], isError: true }; }
+          try { await forwardHttp('POST', `/speak${queue ? '?queue=1' : ''}`, text); } catch (e) { return { content: [{ type: 'text', text: `forward error: ${e.message}` }], isError: true }; }
         }
-        return { content: [{ type: 'text', text: `Speaking (${text.length} chars)${isHttpOwner ? ` with ${state.voice} at rate ${state.rate}` : ' (forwarded to owner)'}` }] };
+        return { content: [{ type: 'text', text: `Speaking (${text.length} chars)${queue ? ' [queued]' : ''}${isHttpOwner ? ` with ${state.voice} at rate ${state.rate}` : ' (forwarded to owner)'}` }] };
       }
       case 'stop':         { const r = isHttpOwner ? await sendCmd('STOP')   : await forwardHttp('GET', '/stop');         return { content: [{ type: 'text', text: r || 'stopped' }] }; }
       case 'pause':        { const r = isHttpOwner ? await sendCmd('PAUSE')  : await forwardHttp('GET', '/pause');        return { content: [{ type: 'text', text: r || 'paused' }] }; }

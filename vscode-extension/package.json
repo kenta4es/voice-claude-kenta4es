@@ -1,0 +1,33 @@
+{
+  "name": "claude-tts-speak",
+  "displayName": "Claude TTS — Озвучить выделение",
+  "description": "Озвучивает выделенный текст голосом Дмитрий через локальный сервер Claude TTS (порт 48329).",
+  "version": "1.0.0",
+  "publisher": "local",
+  "engines": { "vscode": "^1.70.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "claudeTts.speak", "title": "Озвучить выделение (Claude TTS)" },
+      { "command": "claudeTts.togglePause", "title": "Claude TTS: Пауза / Продолжить" },
+      { "command": "claudeTts.stop", "title": "Claude TTS: Стоп" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "claudeTts.speak", "when": "editorTextFocus", "group": "navigation@1" }
+      ]
+    },
+    "keybindings": [],
+    "configuration": {
+      "title": "Claude TTS",
+      "properties": {
+        "claudeTts.host": { "type": "string", "default": "127.0.0.1", "description": "Хост сервера Claude TTS." },
+        "claudeTts.port": { "type": "number", "default": 48329, "description": "Порт HTTP-управления Claude TTS." },
+        "claudeTts.stripMarkdown": { "type": "boolean", "default": true, "description": "Убирать markdown-разметку перед озвучкой." },
+        "claudeTts.speakWholeDocIfNoSelection": { "type": "boolean", "default": true, "description": "Если ничего не выделено — озвучивать весь документ." }
+      }
+    }
+  }
+}

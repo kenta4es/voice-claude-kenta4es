@@ -22,23 +22,45 @@ while ($true) {
     try {
         switch ($cmd) {
             'SPEAK' {
+                # Cross-chat queue: default speak now APPENDS (no SpeakAsyncCancelAll) so speech
+                # from any chat queues instead of interrupting. Use STOP to clear the queue.
                 $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($arg))
-                $s.SpeakAsyncCancelAll() | Out-Null
                 if ($script:isPaused) { try { $s.Resume() } catch {} }
                 $script:isPaused = $false
+                # Re-bind to the CURRENT default audio device before speaking.
+                # A long-lived synthesizer keeps writing to the device captured
+                # at startup; if the default output changed (this PC has AMD,
+                # Realtek and a virtual "Voice Changer" device), audio goes to a
+                # dead endpoint - State says Speaking but nothing is heard.
+                try { $s.SetOutputToDefaultAudioDevice() } catch {}
+                $s.SpeakAsync($text) | Out-Null
+                Write-Output "OK"
+            }
+            'SPEAKQ' {
+                # Queue mode: append after current speech. Also resume if paused, so a
+                # stuck pause never blocks future speech.
+                $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($arg))
+                if ($script:isPaused) { try { $s.Resume() } catch {} }
+                $script:isPaused = $false
+                # Re-bind to the CURRENT default audio device before speaking.
+                # A long-lived synthesizer keeps writing to the device captured
+                # at startup; if the default output changed (this PC has AMD,
+                # Realtek and a virtual "Voice Changer" device), audio goes to a
+                # dead endpoint - State says Speaking but nothing is heard.
+                try { $s.SetOutputToDefaultAudioDevice() } catch {}
                 $s.SpeakAsync($text) | Out-Null
                 Write-Output "OK"
             }
             'STOP' {
+                # ALWAYS cancel. The old code skipped cancelling when
+                # $s.State reported "Ready" - but SAPI often reports Ready
+                # while audio is still playing (no message pump in this loop),
+                # so Stop silently did nothing and speech could not be aborted.
                 $st = $s.State.ToString()
-                if ($st -eq 'Ready' -and -not $script:isPaused) {
-                    Write-Output "NOTHING"
-                } else {
-                    $s.SpeakAsyncCancelAll() | Out-Null
-                    if ($script:isPaused) { try { $s.Resume() } catch {} }
-                    $script:isPaused = $false
-                    Write-Output "STOPPED"
-                }
+                try { $s.SpeakAsyncCancelAll() | Out-Null } catch {}
+                if ($script:isPaused) { try { $s.Resume() } catch {} }
+                $script:isPaused = $false
+                if ($st -eq 'Ready') { Write-Output "STOPPED" } else { Write-Output "STOPPED" }
             }
             'PAUSE' {
                 if (-not $script:isPaused) {
