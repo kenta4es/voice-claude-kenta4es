@@ -72,6 +72,16 @@ function forwardHttp(method, path, body = null) {
   });
 }
 
+// Last-resort guard. This is a background service the user cannot see: dying
+// quietly is the worst possible failure, because every hotkey and every reply
+// goes silent with nothing left to report why. Stay alive and log instead.
+process.on('uncaughtException', (e) => {
+  try { console.error('[tts] uncaught: ' + (e && e.stack ? e.stack : e)); } catch {}
+});
+process.on('unhandledRejection', (e) => {
+  try { console.error('[tts] unhandled rejection: ' + e); } catch {}
+});
+
 // ---------- long-lived PowerShell engine ----------
 const enginePath = join(PSDIR, 'tts-engine.ps1');
 let engine = null;
@@ -84,6 +94,17 @@ function startEngine() {
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', enginePath],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
   );
+
+  // CRITICAL: without these, the death of the engine took the whole server with
+  // it. Writing to the stdin of a dead child emits an async 'error' (EPIPE) on
+  // the stream; an unhandled stream error is a fatal uncaught exception in
+  // Node. Result: engine dies -> server dies -> no /ping, no /stop, no hotkeys,
+  // total silence with nothing left to recover it. Swallow them instead; the
+  // 'exit' handler respawns a fresh engine.
+  engine.on('error', (e) => { try { console.error('[tts] engine error: ' + e.message); } catch {} });
+  engine.stdin.on('error', () => {});
+  engine.stdout.on('error', () => {});
+  engine.stderr.on('error', () => {});
 
   let buf = '';
   engine.stdout.setEncoding('utf8');
@@ -110,16 +131,57 @@ function startEngine() {
   });
 }
 
-function sendCmd(cmd) {
+// Every command now has a deadline. Without one, a wedged engine (a cloud voice
+// stuck mid-request, a dead audio endpoint) left the HTTP request hanging
+// forever: the hotkey's 2 s WinHttp timeout fired, nothing stopped, and Stop
+// looked broken while speech kept playing.
+function sendCmd(cmd, timeoutMs = 8000) {
   return new Promise((resolve) => {
     if (!engine || !engineReady) {
       resolve('ENGINE_NOT_READY');
       return;
     }
-    pendingReplies.push(resolve);
+    let done = false;
+    let timer = null;
+    const entry = (v) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      resolve(v);
+    };
+    timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      // Keep the reply queue aligned: a late answer must not be handed to the
+      // NEXT waiting command, so swap our slot for a no-op instead of removing.
+      const i = pendingReplies.indexOf(entry);
+      if (i !== -1) pendingReplies[i] = () => {};
+      resolve('TIMEOUT');
+    }, timeoutMs);
+    pendingReplies.push(entry);
     try { engine.stdin.write(cmd + '\n'); }
-    catch (e) { resolve('WRITE_ERR'); }
+    catch (e) { entry('WRITE_ERR'); }
   });
+}
+
+// Hard reset: killing the engine process also kills whatever it is playing, so
+// this is the guaranteed way to shut the voice up. The 'exit' handler respawns
+// a fresh engine one second later.
+function restartEngine(reason) {
+  try { console.error('[tts] restarting engine: ' + reason); } catch {}
+  engineReady = false;
+  try { if (engine) engine.kill(); } catch {}
+}
+
+// Stop that cannot fail. If the engine does not confirm quickly it is wedged,
+// so we kill it — the user pressed Stop and must get silence either way.
+async function stopSpeech() {
+  const r = await sendCmd('STOP', 1500);
+  if (r === 'TIMEOUT' || r === 'ENGINE_NOT_READY' || r === 'WRITE_ERR') {
+    restartEngine('stop did not respond (' + r + ')');
+    return 'STOPPED (engine restarted)';
+  }
+  return r;
 }
 
 async function waitReady(timeoutMs = 5000) {
@@ -302,12 +364,23 @@ const httpServer = http.createServer(async (req, res) => {
 
   let result = '';
   switch (pathname) {
-    case '/stop':         result = await sendCmd('STOP'); break;
-    case '/pause':        result = await sendCmd('PAUSE'); break;
-    case '/resume':       result = await sendCmd('RESUME'); break;
-    case '/toggle-pause': result = await sendCmd('TOGGLE'); break;
-    case '/state':        result = await sendCmd('STATE'); break;
-    case '/ping':         result = await sendCmd('PING'); break;
+    // Playback control must answer FAST or self-heal: these are driven by
+    // hotkeys, and a hotkey that hangs is indistinguishable from a broken one.
+    case '/stop':         result = await stopSpeech(); break;
+    case '/pause':        result = await sendCmd('PAUSE', 1500); break;
+    case '/resume':       result = await sendCmd('RESUME', 1500); break;
+    case '/toggle-pause': {
+      result = await sendCmd('TOGGLE', 1500);
+      if (result === 'TIMEOUT' || result === 'ENGINE_NOT_READY') {
+        restartEngine('toggle-pause did not respond');
+        result = 'STOPPED (engine restarted)';
+      }
+      break;
+    }
+    // Diagnostics must never hang either — a health check that blocks forever
+    // is worse than one that honestly reports TIMEOUT.
+    case '/state':        result = await sendCmd('STATE', 1500); break;
+    case '/ping':         result = await sendCmd('PING', 1500); break;
     case '/rate-up': {
       const r = await adjustRate(+1);
       speakAsync(`Скорость ${r}`);
@@ -450,7 +523,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
         return { content: [{ type: 'text', text: `Speaking (${text.length} chars)${queue ? ' [queued]' : ''}${isHttpOwner ? ` with ${state.voice} at rate ${state.rate}` : ' (forwarded to owner)'}` }] };
       }
-      case 'stop':         { const r = isHttpOwner ? await sendCmd('STOP')   : await forwardHttp('GET', '/stop');         return { content: [{ type: 'text', text: r || 'stopped' }] }; }
+      case 'stop':         { const r = isHttpOwner ? await stopSpeech()      : await forwardHttp('GET', '/stop');         return { content: [{ type: 'text', text: r || 'stopped' }] }; }
       case 'pause':        { const r = isHttpOwner ? await sendCmd('PAUSE')  : await forwardHttp('GET', '/pause');        return { content: [{ type: 'text', text: r || 'paused' }] }; }
       case 'resume':       { const r = isHttpOwner ? await sendCmd('RESUME') : await forwardHttp('GET', '/resume');       return { content: [{ type: 'text', text: r || 'resumed' }] }; }
       case 'toggle_pause': { const r = isHttpOwner ? await sendCmd('TOGGLE') : await forwardHttp('GET', '/toggle-pause'); return { content: [{ type: 'text', text: r }] }; }

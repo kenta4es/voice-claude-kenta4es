@@ -2,6 +2,32 @@
 
 All notable changes to this project.
 
+## [1.2.1] — 2026-08-22
+
+Root-cause fix for the whole family of "it just went silent and nothing works"
+failures. Everything below was one bug wearing different masks.
+
+### Fixed
+
+- **The engine dying took the entire server with it.** Writing to the stdin of a
+  dead child process emits an asynchronous `EPIPE` on the stream, and an
+  unhandled stream error is a *fatal* uncaught exception in Node. So the moment
+  the speech engine died — a wedged cloud voice, a lost audio endpoint — the
+  server died too. No `/ping`, no `/stop`, no hotkeys, nothing left alive to
+  recover it. Stream errors are now swallowed and the engine is respawned.
+  Measured: killing the engine used to leave a dead server after 4.1 s; it now
+  answers `/stop` in **36 ms** and comes back on its own.
+- **Commands could wait forever.** `sendCmd` had no deadline: if the engine
+  never answered, the HTTP request never returned, the hotkey's 2 s timeout
+  fired, and Stop looked broken while speech kept playing. Every command now has
+  a timeout; playback controls use a short one (1.5 s).
+- **Stop that cannot fail.** If the engine does not confirm a stop in time it is
+  considered wedged and killed outright — killing the process kills its audio,
+  so pressing Stop always produces silence. A fresh engine starts a second later.
+- **Added a last-resort process guard** (`uncaughtException` /
+  `unhandledRejection`). For a background service, staying alive and logging
+  beats dying silently.
+
 ## [1.2.0] — 2026-08-18
 
 Everything in this release came out of two months of daily use. Most changes are
