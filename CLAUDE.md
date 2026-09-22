@@ -137,8 +137,12 @@ them. Do not just hand them a link and walk away.
 3. **Configure in OpenWhispr** → Settings → Speech-to-Text:
    - engine: **Cloud Providers** → **Groq**
    - paste the API key
-   - model: **Whisper Large v3 Turbo** (fast) or **Large v3** (more accurate
-     punctuation — switch to it if the user complains about missing periods)
+   - model: **Whisper Large v3** (not Turbo — Turbo drops periods and
+     question marks in Russian)
+   - if OpenWhispr shows "Update Available", update first (tested on 1.10.2).
+     For a per-machine install the in-app button silently fails; run
+     `%LOCALAPPDATA%\open-whispr-updater\pending\OpenWhispr-Setup-*.exe`
+     by hand and let the user accept the UAC prompt.
 4. **Set the dictation hotkey** (Settings → Hotkeys) and make sure it does not
    collide with the voice hotkeys from §3.
 5. **Check the microphone** — Settings → Preferences → Input Device. Pick the
@@ -147,18 +151,23 @@ them. Do not just hand them a link and walk away.
 
 Then apply these settings — each one prevents a real failure we hit:
 
-- **Turn OFF "Enable text cleanup"** (Settings → Language Models). It sends the
-  transcript through a second model, which sometimes *answers the user's
-  question* or rewrites their words instead of just cleaning punctuation.
+- **Punctuation = Dictation Cleanup with a strong model and a strict prompt.**
+  Settings → Language Models → Dictation Cleanup: *Enable text cleanup* ON,
+  Cloud Providers → **Groq** → **GPT-OSS 120B**, *Disable thinking output* ON.
+  Prompt Studio → Customize → replace the prompt with
+  `docs/openwhispr-cleanup-prompt.txt` → Save → verify in the *Test* tab with
+  an unpunctuated question. Never use a small model (Llama 8B, GPT-OSS 20B):
+  small models *answer the user's question* instead of punctuating it, or leak
+  `<|python_tag|>` tokens. Full walkthrough: `docs/whisper-groq-setup.md` §4.
 - **Turn OFF "Auto-learn from corrections"** (Settings → Preferences). It feeds
   words from bad transcripts back into the dictionary, which grows the Whisper
   prompt, which produces worse transcripts — a self-reinforcing loop.
 - **Keep the dictionary tiny** — names and technical terms only. The dictionary
   *is* the Whisper prompt: when the audio is unclear, Whisper repeats the prompt
   instead of the speech, so a long dictionary literally leaks into the text.
-- Optional, for punctuation: add ONE short sample phrase such as
-  `Хорошо. Понял, сделаю. А что дальше?` — Whisper imitates the style of the
-  prompt. Keep it short for the same reason as above.
+- Do **not** put sample phrases into the dictionary to "teach" punctuation — it
+  leaks into transcripts on unclear audio. Punctuation comes from the cleanup
+  pass above.
 
 ---
 
@@ -173,7 +182,8 @@ Then apply these settings — each one prevents a real failure we hit:
 | Dictation returns "Thank you" or dictionary words | Microphone captured silence | Check mic level/connection, then re-record |
 | Dictation error `403 Forbidden` | VPN exit IP blocked by the API | Reconnect VPN, change country, or turn it off |
 | Dictation error `Failed to fetch` | Network dropped mid-request | Just retry |
-| Transcript answers the question instead of transcribing | "Enable text cleanup" is on | Turn it off (§5) |
+| Transcript answers the question instead of transcribing | Cleanup runs on a weak model / default prompt | GPT-OSS 120B + strict prompt (§5) |
+| Dictation has no punctuation or question marks | Cleanup off, or Whisper Turbo | Large v3 + cleanup with the strict prompt (§5) |
 
 Useful one-liner to check whether audio reaches the speakers at all — this
 bypasses the whole stack:

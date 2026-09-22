@@ -2,6 +2,43 @@
 
 All notable changes to this project.
 
+## [1.2.2] — 2026-09-22
+
+Dictation quality: proper Russian punctuation without polluting the Whisper
+prompt. Docs and config only — no code changes to the TTS stack.
+
+### Added
+
+- **`docs/openwhispr-cleanup-prompt.txt`** — a strict prompt for OpenWhispr's
+  Dictation Cleanup. It places commas by Russian rules (conjunctions,
+  обращения, вводные слова, причастные/деепричастные обороты), puts a question
+  mark on every question, strips trailing subtitle artifacts ("Продолжение
+  следует", "Субтитры делал…") — and never answers, adds, drops or reorders
+  words. Verified in Prompt Studio: a request about the weather came back
+  punctuated, not answered.
+- **Cost section** in `docs/whisper-groq-setup.md`: official OpenAI prices
+  (gpt-4o-transcribe $0.006/min, gpt-transcribe $0.0045/min,
+  gpt-4o-mini-transcribe $0.003/min), a monthly estimate from a real measured
+  volume (~820 min/month → $2.5–5), how to measure your own volume from
+  OpenWhispr's `transcriptions.db`, and why NVIDIA build.nvidia.com is not a
+  drop-in alternative.
+
+### Changed
+
+- **Dictation Cleanup is now recommended ON** — with Groq **GPT-OSS 120B**
+  and the strict prompt. Previous advice was to turn it off, because small
+  models (Llama 8B) answered questions instead of cleaning them and leaked
+  `<|python_tag|>` tokens. The problem was the model and the prompt, not the
+  feature.
+- STT model recommendation: **Whisper Large v3** instead of Large v3 Turbo —
+  Turbo drops periods and question marks in Russian.
+- Guide tested on **OpenWhispr 1.10.2**; documented that the in-app updater
+  silently fails for per-machine installs and how to run the pending installer
+  by hand.
+- Removed the advice to put sample phrases into the dictionary for punctuation
+  and the "set Language = Russian" step (OpenWhispr 1.10 has no language
+  selector for cloud dictation).
+
 ## [1.2.1] — 2026-08-22
 
 Root-cause fix for the whole family of "it just went silent and nothing works"

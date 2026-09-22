@@ -15,7 +15,7 @@ A complete voice I/O stack for Claude Desktop on Windows — dictate with Whispe
 | Capability | How |
 |---|---|
 | **Claude reads its replies aloud** | MCP server `claude-tts` + skill `voice-output` that Claude calls automatically at the start of every reply |
-| **You dictate to Claude (and any app)** | OpenWhispr + Groq Whisper Large v3 Turbo API — set up once, dictate everywhere |
+| **You dictate to Claude (and any app)** | OpenWhispr + Groq Whisper Large v3 + GPT-OSS 120B punctuation pass (free tier) — set up once, dictate everywhere |
 | **Read any selected text aloud** *(new in 1.2)* | Select text anywhere → `LCtrl+LAlt+Z`. Works in every app; a VS Code extension adds it to the right-click menu |
 | **Speak / Pause / Stop / Restart hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/X/C/R/↑/↓/←/→) that work in any window |
 | **One-key recovery** *(new in 1.2)* | `LCtrl+LAlt+R` restarts the engine — and the whole stack if the server died — then confirms out loud |
@@ -156,7 +156,8 @@ voice-claude-kenta4es/
 ├── standalone/             # Manual installer (no plugin wrapper)
 ├── docs/
 │   ├── architecture.md
-│   └── whisper-groq-setup.md
+│   ├── whisper-groq-setup.md        # dictation: OpenWhispr + Groq, punctuation, costs
+│   └── openwhispr-cleanup-prompt.txt # strict Russian-punctuation prompt for Dictation Cleanup
 ├── README.md
 └── LICENSE
 ```
@@ -242,10 +243,11 @@ The behavior is enforced by the skill description (`description` field in `SKILL
 | Sound works right after `Ctrl+Alt+R`, then dies again | The selected voice is unreliable — typically a cloud voice failing server-side | Switch to a verified voice in `plugin/mcp/voice.txt` (`Svetlana` is the tested default) |
 | The voice changes by itself (e.g. to Irina) | Only in ≤1.1: the server probed the internet at startup and silently fell back to the offline voice — the probe fails whenever a VPN is up | Fixed in 1.2: the configured voice is applied as-is |
 | Dictation returns "Thank you", English words, or your dictionary entries | The microphone captured silence — Whisper then repeats its prompt (your dictionary) or hallucinates | Check the mic level and connection, keep the dictionary tiny, disable "Auto-learn from corrections" |
-| Dictation returns text that *answers* your question instead of transcribing it | OpenWhispr's "Enable text cleanup" sends the transcript through a second model, which sometimes replies instead of cleaning | Turn it off: Settings → Language Models → Dictation Cleanup |
+| Dictation returns text that *answers* your question instead of transcribing it | OpenWhispr's cleanup ran on a small model with the default prompt | Cleanup on **GPT-OSS 120B** (Groq) + the strict prompt from [`docs/openwhispr-cleanup-prompt.txt`](docs/openwhispr-cleanup-prompt.txt) |
+| Dictation has no commas / question marks | Whisper alone punctuates Russian poorly | Whisper Large v3 (not Turbo) + Dictation Cleanup with the strict prompt — see [`docs/whisper-groq-setup.md`](docs/whisper-groq-setup.md) §4 |
 | Dictation error `403 Forbidden` | The API rejects the VPN exit IP | Reconnect the VPN, change country, or turn it off |
 | `speak` works but pause does nothing | Two server.js instances split between MCP and HTTP (architecture mismatch) | Kill all `node.exe` with `*server.js*`, restart Claude Desktop. Owner re-elects on first listen. This was the root bug the architecture fixes |
-| Whisper transcribes "you", "Thank you", random English | Auto-detect picks EN on near-silence | Set OpenWhispr language to Russian explicitly (see `docs/whisper-groq-setup.md`) |
+| Whisper transcribes "you", "Thank you", random English | Auto-detect picks EN on near-silence | OpenWhispr 1.10 has no language selector for cloud dictation — check the mic level; the cleanup prompt strips common trailing artifacts |
 | AHK hotkey tooltip appears but speech keeps going | Engine ignored pause (rare on OneCore voices; usually means mismatch from previous issue) | Same fix as above — kill duplicate node, restart |
 | `Voice not found: "Svetlana"` | Voice not installed | Windows Settings → Time & Language → Speech → Add voices → Russian, pick Svetlana / Dmitry |
 | AHK doesn't load at startup | Startup folder script blocked by SmartScreen | Right-click `claude-tts-hotkeys.ahk` → Properties → Unblock |
