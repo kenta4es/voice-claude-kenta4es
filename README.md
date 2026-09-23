@@ -17,10 +17,10 @@ A complete voice I/O stack for Claude Desktop on Windows — dictate with Whispe
 | **Claude reads its replies aloud** | MCP server `claude-tts` + skill `voice-output` that Claude calls automatically at the start of every reply |
 | **You dictate to Claude (and any app)** | OpenWhispr + Deepgram Nova-3 ($200 free credit, no card) + GPT-OSS 120B punctuation pass on Groq (free tier) — set up once, dictate everywhere |
 | **Read any selected text aloud** *(new in 1.2)* | Select text anywhere → `LCtrl+LAlt+Z`. Works in every app; a VS Code extension adds it to the right-click menu |
-| **Speak / Pause / Stop / Restart hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/X/C/R/↑/↓/←/→) that work in any window |
+| **Speak / Pause / Stop / Restart hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/X/C/R/A/+/−/↑/↓/←/→) that work in any window |
 | **One-key recovery** *(new in 1.2)* | `LCtrl+LAlt+R` restarts the engine — and the whole stack if the server died — then confirms out loud |
 | **Independent of Claude Desktop** | TTS server autostarts at logon via Scheduled Task — hotkeys keep working when Claude is closed |
-| **Any app can speak too** | Local HTTP API on `127.0.0.1:48329`: `POST /speak`, `GET /toggle-pause`, `GET /voice-set?name=...` |
+| **Any app can speak too** | Local HTTP API on `127.0.0.1:48329`: `POST /speak`, `GET /toggle-pause`, `GET /voice-set?name=...`, `GET /mute-toggle`, `GET /volume-up` / `/volume-down`, `GET /volume-state` |
 
 Russian voices supported out of the box: **Microsoft Svetlana Online** (neural, **default since 1.2**), **Microsoft Irina Desktop** (classic, offline), plus male options — `BrianMultilingual` / `AndrewMultilingual` (neural) and offline `Microsoft Pavel`. English voices work by switching with `set_voice`.
 
@@ -87,6 +87,11 @@ All hotkeys use **Left Ctrl + Left Alt** + key, with physical scan codes so they
 | `LCtrl + LAlt + R` | **Restart the engine and recover sound** — press this first whenever it goes quiet | spoken confirmation |
 | `LCtrl + LAlt + ↑ / ↓` | Speech rate + / − | "Rate +" with new value |
 | `LCtrl + LAlt + → / ←` | Cycle Russian voice forward / back | New voice name spoken |
+| `LCtrl + LAlt + A` | **Mute / unmute the voice** *(new in 1.2.4)* — remembers the volume: mute at 70 %, unmute → 70 % again | "Озвучка: ВЫКЛ" / "Озвучка: ВКЛ — 70%" |
+| `LCtrl + LAlt + =` (the `+` key) or numpad `+` | Voice volume +10 | "Громкость озвучки: 80%" |
+| `LCtrl + LAlt + -` or numpad `-` | Voice volume −10 | "Громкость озвучки: 60%" |
+
+Volume keys change only the voice, not Windows volume. Mute and volume survive `Ctrl+Alt+R`, engine crashes and reboots. Note: `Ctrl+Alt+A` is captured in every app.
 
 ---
 

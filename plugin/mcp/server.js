@@ -26,6 +26,7 @@ const state = {
   voice: 'Microsoft Dmitry Online',
   rate: 1,
   volume: 100,
+  lastVolume: 100, // volume to restore when un-muting (Ctrl+Alt+A)
   removePunctuationPauses: false,
 };
 
@@ -126,8 +127,16 @@ function startEngine() {
   engine.on('exit', () => {
     engineReady = false;
     pendingReplies.splice(0).forEach((r) => r('ENGINE_EXIT'));
-    // auto-restart after 1s
-    setTimeout(() => startEngine(), 1000);
+    // auto-restart after 1s, then re-apply the saved voice/rate/volume: a fresh
+    // engine starts at SAPI defaults (volume 100), which would override a mute.
+    setTimeout(async () => {
+      startEngine();
+      if (await waitReady(8000)) {
+        await sendCmd(`VOLUME ${state.volume}`);
+        await sendCmd(`RATE ${state.rate}`);
+        await sendCmd(`VOICE ${state.voice}`);
+      }
+    }, 1000);
   });
 }
 
@@ -433,6 +442,39 @@ const httpServer = http.createServer(async (req, res) => {
       saveState();
       await sendCmd(`RATE ${state.rate}`);
       result = String(state.rate);
+      break;
+    }
+    case '/mute-toggle': {
+      // Ctrl+Alt+A. Muting remembers the current volume; un-muting restores it.
+      if (state.volume > 0) {
+        state.lastVolume = state.volume;
+        state.volume = 0;
+        result = 'OFF';
+      } else {
+        state.volume = state.lastVolume > 0 ? state.lastVolume : 100;
+        result = `ON ${state.volume}`;
+      }
+      saveState();
+      await sendCmd(`VOLUME ${state.volume}`);
+      break;
+    }
+    case '/volume-up':
+    case '/volume-down': {
+      // Ctrl+Alt+= / Ctrl+Alt+-  (also numpad +/-). Step 10, clamped to 0..100.
+      const step = pathname === '/volume-up' ? 10 : -10;
+      const before = state.volume;
+      state.volume = Math.max(0, Math.min(100, Math.round((before + step) / 10) * 10));
+      if (state.volume === 0 && before > 0) state.lastVolume = before; // stepped down to silence
+      if (state.volume > 0) state.lastVolume = state.volume;
+      saveState();
+      await sendCmd(`VOLUME ${state.volume}`);
+      result = state.volume === 0 ? 'OFF' : String(state.volume);
+      break;
+    }
+    case '/volume-state': {
+      // Diagnostics: saved volume vs. what the engine is actually using.
+      const eng = await sendCmd('GETVOL', 1500);
+      result = JSON.stringify({ saved: state.volume, lastVolume: state.lastVolume, engine: eng });
       break;
     }
     case '/volume-set': {

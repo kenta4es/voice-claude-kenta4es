@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.0
+﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 #UseHook True
 
@@ -6,7 +6,7 @@
 ; generates Ctrl+Alt and can conflict with our hotkeys.
 ; Scan codes — layout-independent (physical key, not letter).
 
-TtsLog := "D:\Claude\tts-hotkeys.log"
+TtsLog := A_Temp . "\claude-tts-hotkeys.log"
 
 ; Map raw server response to a friendly readable string.
 PrettyResponse(label, resp) {
@@ -82,6 +82,38 @@ FileAppend("==== claude-tts-hotkeys started " . FormatTime(, "yyyy-MM-dd HH:mm:s
 ; --- Voice (Russian only) ---
 <^<!Right::CallTTS("/voice-next", "Voice next")
 <^<!Left:: CallTTS("/voice-prev", "Voice prev")
+
+; --- Volume of the voice only (system volume is untouched) ---
+<^<!sc01E::      CallVolume("/mute-toggle")   ; A: звук озвучки вкл/выкл (помнит громкость)
+<^<!sc00D::      CallVolume("/volume-up")     ; = / + : громкость +10
+<^<!NumpadAdd::  CallVolume("/volume-up")
+<^<!sc00C::      CallVolume("/volume-down")   ; - : громкость -10
+<^<!NumpadSub::  CallVolume("/volume-down")
+
+CallVolume(path) {
+    global TtsLog
+    resp := ""
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.Open("GET", "http://127.0.0.1:48329" . path, false)
+        http.SetTimeouts(2000, 2000, 2000, 2000)
+        http.Send()
+        resp := Trim(http.ResponseText)
+    } catch as e {
+        FileAppend("  ERROR: " . e.Message . "`r`n", TtsLog)
+        Notify("Озвучка недоступна — нажми Ctrl+Alt+R")
+        return
+    }
+    if (resp = "OFF") {
+        Notify("Озвучка: ВЫКЛ 🔇")
+    } else if (RegExMatch(resp, "^ON (\d+)$", &m)) {
+        Notify("Озвучка: ВКЛ — " . m[1] . "%")
+    } else if (RegExMatch(resp, "^\d+$")) {
+        Notify("Громкость озвучки: " . resp . "%")
+    } else {
+        Notify("Громкость: " . resp)
+    }
+}
 
 
 ; --- Reset (R = sc013): снимает зависшую озвучку и возвращает голос ---

@@ -100,6 +100,12 @@ keyboard language does not matter):
 | `R` | restart the engine and recover sound |
 | `↑` / `↓` | speech rate up / down |
 | `→` / `←` | next / previous voice |
+| `A` | mute / unmute the voice (remembers the volume) |
+| `=` (`+`) / `-`, also numpad `+` / `-` | voice volume +10 / −10 |
+
+Mention `A` too — people want silence at night without closing anything.
+Verify volume with `GET /volume-state` → `{"saved":..,"lastVolume":..,"engine":..}`;
+`engine` is what SAPI actually uses and must equal `saved`.
 
 Tell the user about `R` explicitly: **if sound ever disappears, press
 Ctrl+Alt+R first.** It fixes almost everything by itself.

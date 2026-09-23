@@ -89,6 +89,7 @@ while ($true) {
             }
             'RATE' { $s.Rate = [int]$arg; Write-Output "OK" }
             'VOLUME' { $s.Volume = [int]$arg; Write-Output "OK" }
+            'GETVOL' { Write-Output ([string]$s.Volume) }
             'STATE' {
                 $st = $s.State.ToString()
                 if ($script:isPaused -or $st -eq 'Paused') { Write-Output "Paused" }

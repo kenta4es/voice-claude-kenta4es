@@ -2,6 +2,34 @@
 
 All notable changes to this project.
 
+## [1.2.4] — 2026-09-24
+
+Night mode: silence the voice with one key, without closing anything.
+
+### Added
+
+- **`LCtrl+LAlt+A` — mute / unmute the voice.** Muting remembers the current
+  volume; unmuting restores it (mute at 70 % → unmute → 70 %, not 100 %).
+- **`LCtrl+LAlt+=` / `-`** (also numpad `+` / `-`) — voice volume ±10, clamped
+  to 0–100. Each press shows a tooltip: "Озвучка: ВЫКЛ", "Озвучка: ВКЛ — 70%",
+  "Громкость озвучки: 60%". Only the voice changes, not Windows volume.
+  All three keys were checked to be free of global registrations.
+- HTTP: `GET /mute-toggle`, `/volume-up`, `/volume-down`, and
+  `GET /volume-state` → `{"saved","lastVolume","engine"}` — the saved setting
+  next to what the engine is really using (new engine command `GETVOL`).
+
+### Fixed
+
+- **A restarted engine ignored the saved volume, rate and voice.** After
+  `Ctrl+Alt+R`, a stop timeout or a crash, the fresh engine started at SAPI
+  defaults — volume 100 — while the settings still said otherwise. A muted
+  voice would suddenly come back at full volume in the middle of the night.
+  The server now re-applies volume, rate and voice every time the engine
+  restarts. Verified: after `Ctrl+Alt+R` the engine reports volume 0.
+- **Hotkey log path was hard-coded to `D:\Claude\` since the first release.**
+  On machines without that folder every hotkey could fail on logging. The log
+  now goes to `%TEMP%\claude-tts-hotkeys.log`.
+
 ## [1.2.3] — 2026-09-23
 
 Dictation without invented words: Deepgram Nova-3 replaces Whisper as the
