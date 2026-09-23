@@ -2,6 +2,47 @@
 
 All notable changes to this project.
 
+## [1.2.3] — 2026-09-23
+
+Dictation without invented words: Deepgram Nova-3 replaces Whisper as the
+recommended speech engine. Still free. No changes to the TTS code.
+
+### Why
+
+Whisper kept appending phrases that were never spoken — "Продолжение
+следует", "Субтитры делал…", and plausible tails like "и я могу". It learned
+them from YouTube subtitles and fills pauses with them. Cloud APIs (Groq,
+OpenAI) do not expose Whisper's anti-hallucination thresholds, and a cleanup
+LLM cannot tell an invented tail from real speech. The strict cleanup prompt
+from 1.2.2 was a safety net, not a cure.
+
+### Added
+
+- **Deepgram Nova-3 setup** in `docs/whisper-groq-setup.md` and `CLAUDE.md`:
+  $200 free credit, no card, never expires (~3 years of heavy dictation);
+  what "Credit" in the console means; how the dictionary works as Deepgram
+  *keyterms* (a recognition boost that does not leak into pauses, and whose
+  spelling controls Cyrillic vs Latin output — `СДЭК`, `Bybit`).
+- **`tools/openwhispr-set-language.ps1`** (+ `.mjs`): sets OpenWhispr's
+  dictation language. OpenWhispr 1.10 asks for it only during onboarding and
+  has no setting afterwards; left on "auto", Nova-3 writes Russian speech as
+  English words. The script restarts OpenWhispr with a local debugging port,
+  writes `preferredLanguage`, and always restarts it normally afterwards.
+  Verified end to end.
+- Three OpenWhispr gotchas we hit, each with its fix: the Nova-3 row must be
+  clicked to become "Active"; OpenWhispr must be restarted after adding a
+  Deepgram key (`No deepgram API key configured`); Deepgram is live-only, so
+  Re-transcribe and Audio Upload do not work with it.
+- Why local models are not recommended on weak PCs (2-core CPU: 25–45 s per
+  minute of speech).
+
+### Fixed
+
+- The 1.2.2 guide said the language cannot be set in OpenWhispr 1.10 — it can,
+  with the script above.
+- Measuring your dictation volume: copy `transcriptions.db` **together with**
+  its `-wal` file; the `.db` alone silently misses recent dictations.
+
 ## [1.2.2] — 2026-09-22
 
 Dictation quality: proper Russian punctuation without polluting the Whisper

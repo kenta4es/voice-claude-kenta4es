@@ -128,21 +128,42 @@ separate app to dictate. Do not skip this section because "it's optional" —
 ask once whether they want to talk instead of type, and if yes, install it for
 them. Do not just hand them a link and walk away.
 
+Accounts and keys: the user creates every account and pastes every key
+themselves. Never type their password or an API key; open the page, fill in
+harmless onboarding questions, and tell them clearly when their action is
+needed.
+
 1. **Install OpenWhispr** — https://openwhispr.com (free, Windows installer).
-   Download it, run the installer, launch the app.
-2. **Get a Groq API key** — https://console.groq.com → *API Keys* → create key.
-   The free tier is enough for everyday dictation. The user must create the
-   account themselves; never type their password or handle the key for them
-   beyond pasting it where they ask.
-3. **Configure in OpenWhispr** → Settings → Speech-to-Text:
-   - engine: **Cloud Providers** → **Groq**
-   - paste the API key
-   - model: **Whisper Large v3** (not Turbo — Turbo drops periods and
-     question marks in Russian)
-   - if OpenWhispr shows "Update Available", update first (tested on 1.10.2).
-     For a per-machine install the in-app button silently fails; run
-     `%LOCALAPPDATA%\open-whispr-updater\pending\OpenWhispr-Setup-*.exe`
-     by hand and let the user accept the UAC prompt.
+   If it shows "Update Available", update first (tested on 1.10.2). For a
+   per-machine install the in-app button silently fails; run
+   `%LOCALAPPDATA%\open-whispr-updater\pending\OpenWhispr-Setup-*.exe` by
+   hand and let the user accept the UAC prompt.
+2. **Speech engine: Deepgram Nova-3** (default choice). Whisper appends
+   invented phrases on pauses ("Продолжение следует", "и я могу") and no
+   cloud API lets you switch that off; Deepgram does not do it. Free: $200
+   credit, no card, never expires (~3 years of heavy dictation). The console
+   shows "Credit: $200" — tell the user it is a prepaid balance, not a loan.
+   - user signs up at https://console.deepgram.com/signup and creates a key
+     (name `OpenWhispr`, expiry Never), copies it — shown once;
+   - Settings → Speech-to-Text → Dictation → Cloud Providers → **Deepgram**
+     → user pastes key → **add**;
+   - **click the Nova-3 row until it says "Active"** — the tab alone does
+     not switch dictation over;
+   - **restart OpenWhispr** — otherwise the dictation window never sees the
+     key and fails with `No deepgram API key configured`;
+   - **set the language**: `powershell -ExecutionPolicy Bypass -File
+     tools\openwhispr-set-language.ps1 -Lang ru`. OpenWhispr has no language
+     setting after onboarding; without it Nova-3 writes Russian speech as
+     English words.
+   Verify in `%APPDATA%\open-whispr\transcriptions.db` (copy it together with
+   its `-wal` file): new rows must show `provider=deepgram-streaming`,
+   `model=nova-3` and Russian `raw_text`.
+   Weak PC? Do not offer local models (Parakeet/Whisper) on a 2-core CPU —
+   25–45 s per minute of speech with the CPU pinned.
+   Fallback engine: Groq **Whisper Large v3** (not Turbo), key from
+   https://console.groq.com — see `docs/whisper-groq-setup.md` §3b.
+3. **Groq key anyway** — https://console.groq.com → *API Keys*. The
+   punctuation pass below runs on Groq's free tier.
 4. **Set the dictation hotkey** (Settings → Hotkeys) and make sure it does not
    collide with the voice hotkeys from §3.
 5. **Check the microphone** — Settings → Preferences → Input Device. Pick the
@@ -160,11 +181,12 @@ Then apply these settings — each one prevents a real failure we hit:
   small models *answer the user's question* instead of punctuating it, or leak
   `<|python_tag|>` tokens. Full walkthrough: `docs/whisper-groq-setup.md` §4.
 - **Turn OFF "Auto-learn from corrections"** (Settings → Preferences). It feeds
-  words from bad transcripts back into the dictionary, which grows the Whisper
-  prompt, which produces worse transcripts — a self-reinforcing loop.
-- **Keep the dictionary tiny** — names and technical terms only. The dictionary
-  *is* the Whisper prompt: when the audio is unclear, Whisper repeats the prompt
-  instead of the speech, so a long dictionary literally leaks into the text.
+  words from bad transcripts back into the dictionary — a self-reinforcing loop.
+- **Dictionary.** With Deepgram it becomes *keyterms*: a recognition boost, not
+  a prompt, so it does not leak into pauses. Add only names/terms it gets
+  wrong (20–50), spelled exactly as they should appear (`СДЭК` Cyrillic,
+  `Bybit` Latin — Deepgram keeps the spelling). With Whisper the dictionary
+  *is* the prompt and leaks on unclear audio — keep it tiny or empty.
 - Do **not** put sample phrases into the dictionary to "teach" punctuation — it
   leaks into transcripts on unclear audio. Punctuation comes from the cleanup
   pass above.
@@ -184,6 +206,10 @@ Then apply these settings — each one prevents a real failure we hit:
 | Dictation error `Failed to fetch` | Network dropped mid-request | Just retry |
 | Transcript answers the question instead of transcribing | Cleanup runs on a weak model / default prompt | GPT-OSS 120B + strict prompt (§5) |
 | Dictation has no punctuation or question marks | Cleanup off, or Whisper Turbo | Large v3 + cleanup with the strict prompt (§5) |
+| Invented words at the end of dictation | Whisper hallucination on pauses | Switch to Deepgram Nova-3 (§5) |
+| Russian speech comes out as English words | Language "auto" → Nova-3 assumes English | `tools/openwhispr-set-language.ps1 -Lang ru` |
+| `No deepgram API key configured`, key visible in Settings | Dictation window started before the key was added | Restart OpenWhispr |
+| Still Whisper in history after choosing Deepgram | Nova-3 row not activated | Click it until "Active" |
 
 Useful one-liner to check whether audio reaches the speakers at all — this
 bypasses the whole stack:

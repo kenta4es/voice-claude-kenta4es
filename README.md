@@ -15,7 +15,7 @@ A complete voice I/O stack for Claude Desktop on Windows — dictate with Whispe
 | Capability | How |
 |---|---|
 | **Claude reads its replies aloud** | MCP server `claude-tts` + skill `voice-output` that Claude calls automatically at the start of every reply |
-| **You dictate to Claude (and any app)** | OpenWhispr + Groq Whisper Large v3 + GPT-OSS 120B punctuation pass (free tier) — set up once, dictate everywhere |
+| **You dictate to Claude (and any app)** | OpenWhispr + Deepgram Nova-3 ($200 free credit, no card) + GPT-OSS 120B punctuation pass on Groq (free tier) — set up once, dictate everywhere |
 | **Read any selected text aloud** *(new in 1.2)* | Select text anywhere → `LCtrl+LAlt+Z`. Works in every app; a VS Code extension adds it to the right-click menu |
 | **Speak / Pause / Stop / Restart hotkeys** | AutoHotkey v2 layout-independent hotkeys (Left Ctrl + Left Alt + Z/X/C/R/↑/↓/←/→) that work in any window |
 | **One-key recovery** *(new in 1.2)* | `LCtrl+LAlt+R` restarts the engine — and the whole stack if the server died — then confirms out loud |
@@ -156,8 +156,10 @@ voice-claude-kenta4es/
 ├── standalone/             # Manual installer (no plugin wrapper)
 ├── docs/
 │   ├── architecture.md
-│   ├── whisper-groq-setup.md        # dictation: OpenWhispr + Groq, punctuation, costs
+│   ├── whisper-groq-setup.md        # dictation: OpenWhispr + Deepgram/Groq, punctuation, costs
 │   └── openwhispr-cleanup-prompt.txt # strict Russian-punctuation prompt for Dictation Cleanup
+├── tools/
+│   └── openwhispr-set-language.ps1  # sets OpenWhispr's dictation language (+ .mjs helper)
 ├── README.md
 └── LICENSE
 ```
@@ -247,7 +249,9 @@ The behavior is enforced by the skill description (`description` field in `SKILL
 | Dictation has no commas / question marks | Whisper alone punctuates Russian poorly | Whisper Large v3 (not Turbo) + Dictation Cleanup with the strict prompt — see [`docs/whisper-groq-setup.md`](docs/whisper-groq-setup.md) §4 |
 | Dictation error `403 Forbidden` | The API rejects the VPN exit IP | Reconnect the VPN, change country, or turn it off |
 | `speak` works but pause does nothing | Two server.js instances split between MCP and HTTP (architecture mismatch) | Kill all `node.exe` with `*server.js*`, restart Claude Desktop. Owner re-elects on first listen. This was the root bug the architecture fixes |
-| Whisper transcribes "you", "Thank you", random English | Auto-detect picks EN on near-silence | OpenWhispr 1.10 has no language selector for cloud dictation — check the mic level; the cleanup prompt strips common trailing artifacts |
+| Whisper transcribes "you", "Thank you", random English | Language left on "auto" | Set it: `tools/openwhispr-set-language.ps1 -Lang ru` (OpenWhispr has no language setting after onboarding) |
+| Dictation ends with phrases you never said ("Продолжение следует", "и я могу") | Whisper hallucinates on pauses; cloud APIs can't switch it off | Use Deepgram Nova-3 — see [`docs/whisper-groq-setup.md`](docs/whisper-groq-setup.md) §2–3 |
+| `No deepgram API key configured` while the key is visible in Settings | The dictation window started before the key was added | Restart OpenWhispr |
 | AHK hotkey tooltip appears but speech keeps going | Engine ignored pause (rare on OneCore voices; usually means mismatch from previous issue) | Same fix as above — kill duplicate node, restart |
 | `Voice not found: "Svetlana"` | Voice not installed | Windows Settings → Time & Language → Speech → Add voices → Russian, pick Svetlana / Dmitry |
 | AHK doesn't load at startup | Startup folder script blocked by SmartScreen | Right-click `claude-tts-hotkeys.ahk` → Properties → Unblock |
