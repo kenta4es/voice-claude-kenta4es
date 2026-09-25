@@ -514,12 +514,12 @@ const TOOLS = [
   {
     name: 'speak',
     description:
-      'Speak text aloud. Call as the FIRST action of a reply so the voice leads the on-screen text (NOT at the end). Pass the full reply text with markdown/code/file-paths stripped — it must match what you write to the user. Set queue=true to APPEND after the current speech instead of interrupting it (use for narrating intermediate steps within one reply); omit/false interrupts previous speech (normal single reply). Long replies are spoken async.',
+      'Speak text aloud. Call as the FIRST action of a reply so the voice leads the on-screen text (NOT at the end). Pass the full reply text with markdown/code/file-paths stripped — it must match what you write to the user. Speech never interrupts: every call is queued after whatever is playing (other chats included). A normal call starts a NEW message — if something is still playing, the engine announces it with a 2 s pause and "Следующее сообщение". Set queue=true only to CONTINUE the same reply without that announcement. Long replies are spoken async.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Text to speak.' },
-        queue: { type: 'boolean', description: 'If true, append after current speech without interrupting. Default false.' },
+        queue: { type: 'boolean', description: 'true = continuation of the same reply (no "next message" announcement). Default false = new message. Neither interrupts.' },
       },
       required: ['text'],
     },

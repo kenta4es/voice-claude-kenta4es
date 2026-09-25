@@ -2,6 +2,33 @@
 
 All notable changes to this project.
 
+## [1.2.6] — 2026-09-25
+
+One queue for everything, with an audible boundary between messages.
+
+### Added
+
+- **"Next message" separator.** When a new message arrives while another one
+  is still playing or queued, the engine inserts a 2-second pause and says
+  «Следующее сообщение» before it. A message that arrives when the voice is
+  idle is read immediately, without the separator. Continuations of the same
+  reply (`speak` with `queue=true`) are appended without it. The separator is
+  spoken in the current voice (SAPI `PromptBuilder` pinned to that voice).
+
+### Fixed
+
+- **`Ctrl+Alt+Z` interrupted whatever was playing.** The hotkey script sent
+  `/stop` before reading the selection, which cut off the current speech and
+  wiped the queue. The selection is now queued like any other message.
+
+### Verified (silent, volume 0, engine busy-time measured)
+
+| Scenario | Queued | Interrupted | Result |
+|---|---|---|---|
+| Reply from another chat while speaking | ~20.3 s | ~11.8 s | 23.1 s — queued + separator |
+| `Ctrl+Alt+Z` while speaking | ~20.5 s | ~11.8 s | 22.6 s — queued + separator |
+| Continuation of the same reply | ~20.3 s | ~11.8 s | 20.2 s — queued, no separator |
+
 ## [1.2.5] — 2026-09-25
 
 Auto-voicing reads only what you actually see.

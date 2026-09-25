@@ -1,5 +1,6 @@
 # Speak the text stored in speak-sel.txt (written by the AHK hotkey).
-# Mirrors the proven Ctrl+Alt+R path: HTTP stop, then POST raw UTF-8 bytes.
+# POSTs raw UTF-8 bytes to /speak: appended after current speech (never interrupts),
+# as a separate message - the engine announces it with a pause + "next message".
 # ASCII-only source on purpose (PS 5.1 encoding safety).
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -17,8 +18,8 @@ function Test-Server {
     try { return ((Invoke-WebRequest -UseBasicParsing -Uri "$u/ping" -TimeoutSec 3).Content -match 'PONG') } catch { return $false }
 }
 
-# clear the queue so the selection is read immediately
-try { Invoke-WebRequest -UseBasicParsing -Uri "$u/stop" -TimeoutSec 4 | Out-Null } catch { L 'stop failed' }
+# No stop here: the selection is QUEUED after whatever is already speaking
+# (another chat, a previous selection). Ctrl+Alt+C clears the queue if needed.
 
 # If the server is down, bring the whole stack up (engine alone can't respawn).
 if (-not (Test-Server)) {

@@ -81,7 +81,7 @@ All hotkeys use **Left Ctrl + Left Alt** + key, with physical scan codes so they
 
 | Hotkey | Action | Tooltip |
 |---|---|---|
-| `LCtrl + LAlt + Z` | **Speak the selected text** — works in any app | "Читаю выделение: N симв." |
+| `LCtrl + LAlt + Z` | **Speak the selected text** — works in any app; queued after current speech, never interrupts | "Читаю выделение: N симв." |
 | `LCtrl + LAlt + X` | Pause / resume current speech | "Paused" / "Resumed" / "Nothing playing" |
 | `LCtrl + LAlt + C` | Stop current speech | "Stopped" / "Nothing playing" |
 | `LCtrl + LAlt + R` | **Restart the engine and recover sound** — press this first whenever it goes quiet | spoken confirmation |
@@ -90,6 +90,8 @@ All hotkeys use **Left Ctrl + Left Alt** + key, with physical scan codes so they
 | `LCtrl + LAlt + A` | **Mute / unmute the voice** *(new in 1.2.4)* — remembers the volume: mute at 70 %, unmute → 70 % again | "Озвучка: ВЫКЛ" / "Озвучка: ВКЛ — 70%" |
 | `LCtrl + LAlt + =` (the `+` key) or numpad `+` | Voice volume +10 | "Громкость озвучки: 80%" |
 | `LCtrl + LAlt + -` or numpad `-` | Voice volume −10 | "Громкость озвучки: 60%" |
+
+**Queue.** Nothing interrupts anything: replies from different chats and `Ctrl+Alt+Z` selections are queued. When a new message arrives while another is still playing, the engine inserts a 2-second pause and says «Следующее сообщение» before it, so separate messages are easy to tell apart. `Ctrl+Alt+C` stops the voice and clears the whole queue.
 
 Volume keys change only the voice, not Windows volume. Mute and volume survive `Ctrl+Alt+R`, engine crashes and reboots. Note: `Ctrl+Alt+A` is captured in every app.
 

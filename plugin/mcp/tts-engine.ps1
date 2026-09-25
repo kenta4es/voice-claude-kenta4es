@@ -10,6 +10,35 @@ $s.Rate = 1
 # Track pause state manually — SAPI $s.State may not update without message pump in STA
 $script:isPaused = $false
 
+# Message separator: when a NEW message (SPEAK) arrives while another one is still
+# playing or queued, it is prefixed with a 2 s pause + "Next message" (in Russian) so
+# queued messages from different chats are audibly distinct. SPEAKQ (explicit
+# continuation of the same message) is appended without a separator.
+# Text is stored as base64 to keep this file ASCII-only (PS 5.1 encoding safety).
+$script:sepText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KHQu9C10LTRg9GO0YnQtdC1INGB0L7QvtCx0YnQtdC90LjQtS4='))
+$script:pending = New-Object System.Collections.ArrayList
+function Test-Busy {
+    for ($i = $script:pending.Count - 1; $i -ge 0; $i--) {
+        if ($script:pending[$i].IsCompleted) { $script:pending.RemoveAt($i) }
+    }
+    return ($script:pending.Count -gt 0) -or ($s.State.ToString() -eq 'Speaking')
+}
+function Speak-Message([string]$text, [bool]$separate) {
+    if ($separate -and (Test-Busy)) {
+        $pb = New-Object System.Speech.Synthesis.PromptBuilder($s.Voice.Culture)
+        $pb.StartVoice($s.Voice)   # same voice as the message, never a culture-picked one
+        $pb.AppendBreak([TimeSpan]::FromSeconds(2))
+        $pb.AppendText($script:sepText)
+        $pb.AppendBreak([TimeSpan]::FromMilliseconds(600))
+        $pb.AppendText($text)
+        $pb.EndVoice()
+        $p = $s.SpeakAsync($pb)
+    } else {
+        $p = $s.SpeakAsync($text)
+    }
+    [void]$script:pending.Add($p)
+}
+
 Write-Output "READY"
 
 while ($true) {
@@ -32,8 +61,8 @@ while ($true) {
                 # at startup; if the default output changed (this PC has AMD,
                 # Realtek and a virtual "Voice Changer" device), audio goes to a
                 # dead endpoint - State says Speaking but nothing is heard.
-                try { $s.SetOutputToDefaultAudioDevice() } catch {}
-                $s.SpeakAsync($text) | Out-Null
+                if (-not (Test-Busy)) { try { $s.SetOutputToDefaultAudioDevice() } catch {} }
+                Speak-Message $text $true
                 Write-Output "OK"
             }
             'SPEAKQ' {
@@ -47,8 +76,8 @@ while ($true) {
                 # at startup; if the default output changed (this PC has AMD,
                 # Realtek and a virtual "Voice Changer" device), audio goes to a
                 # dead endpoint - State says Speaking but nothing is heard.
-                try { $s.SetOutputToDefaultAudioDevice() } catch {}
-                $s.SpeakAsync($text) | Out-Null
+                if (-not (Test-Busy)) { try { $s.SetOutputToDefaultAudioDevice() } catch {} }
+                Speak-Message $text $false
                 Write-Output "OK"
             }
             'STOP' {
@@ -58,6 +87,7 @@ while ($true) {
                 # so Stop silently did nothing and speech could not be aborted.
                 $st = $s.State.ToString()
                 try { $s.SpeakAsyncCancelAll() | Out-Null } catch {}
+                $script:pending.Clear()
                 if ($script:isPaused) { try { $s.Resume() } catch {} }
                 $script:isPaused = $false
                 if ($st -eq 'Ready') { Write-Output "STOPPED" } else { Write-Output "STOPPED" }
