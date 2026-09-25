@@ -52,9 +52,19 @@ function walk(dir, out, depth) {
 }
 function listTranscripts() { const out = []; for (const r of ROOTS) walk(r, out, 0); return out; }
 
+// Fenced blocks: read human prose (ready-to-send texts, quotes), skip code.
+function isProseBlock(body) {
+  const b = String(body);
+  const letters = (b.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
+  const cyr = (b.match(/[А-Яа-яЁё]/g) || []).length;
+  const codeChars = (b.match(/[{}[\];=<>$\\|]/g) || []).length;
+  if (letters < 3 || cyr < letters * 0.5) return false;
+  return codeChars <= Math.max(1, b.length * 0.01);
+}
+
 function stripMarkdown(t) {
   return String(t)
-    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => (isProseBlock(body) ? '\n' + body.trim() + '\n' : ' '))
     // Service/UI noise that must never be read aloud: tool-usage summaries
     // ("Used Desktop Commander integration", "(3 actions) · 4 notes"),
     // bare domains and file paths.
@@ -129,7 +139,19 @@ function isVoiceable(text) {
   return cyr > 0 && cyr >= lat * 0.5;
 }
 
+// Per-chat quiet mode, driven by the user's own words in that chat:
+// «без озвучки» / «не озвучивай» / «выключи озвучку» (or a short «тихо»/«молча»)
+// silence auto-voicing for that chat until «включи озвучку».
+function updateQuiet(st, text) {
+  const t = String(text || '').toLowerCase();
+  if (!t.trim()) return;
+  if (/включи(те)?\s+озвучк/.test(t)) { st.quiet = false; return; }
+  if (/без\s+озвучк|не\s+озвучивай|выключи(те)?\s+озвучк/.test(t)) { st.quiet = true; return; }
+  if (t.trim().length <= 40 && /(^|[^а-яё])(тихо|молча)([^а-яё]|$)/.test(t)) st.quiet = true;
+}
+
 function flushTurn(file, st) {
+  if (st.quiet) { for (const p of st.turnTexts) st.voiced.add(p.uuid); st.turnTexts = []; st.lastToolSeq = -1; return; }
   if (!st.sawSpeak) {
     for (const p of st.turnTexts) {
       if (st.voiced.has(p.uuid)) continue;
@@ -157,6 +179,7 @@ function handleEvent(file, st, ev) {
     if (!ev.tool_use_result && !hasToolResult(content)) {
       flushTurn(file, st);     // close previous turn with its own sawSpeak
       st.sawSpeak = false;     // new user turn begins
+      updateQuiet(st, textOf(content));
     }
     return;
   }

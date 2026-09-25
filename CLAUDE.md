@@ -118,8 +118,19 @@ Add the MCP server to `claude_desktop_config.json`, or install the Cowork plugin
 from Releases. Then load the `voice-output` skill so Claude calls `speak` as the
 first action of every reply.
 
+**Check that the skill is actually ON.** A skill can be installed but disabled —
+then nothing tells Claude to call `speak`, and only the `tts-watch` auto-voicing
+backstop reads replies. Have the user open Settings → Capabilities → Skills and
+make sure `voice-output` is switched on. This toggle is per account and cannot be
+set from the repository or by an installer — the user flips it once.
+
 **Critical:** if the user keeps a personal preference about voice, it must agree
-with the skill. A preference like *"speak at the end"* overrides the skill and
+with the skill. Recommended line for Settings → Account → Instructions for Claude:
+`VOICE: Call mcp__claude-tts__speak FIRST in every reply. Speak text = final chat
+text verbatim, minus markdown, paths, URLs and code. Fenced blocks with
+human-language text (ready-to-send messages, quotes) ARE read aloud. Don't voice
+intermediate notes. «тихо» / «без озвучки» = stop until «включи озвучку».`
+A stale line like *"minus markdown/code"* makes Claude skip ready-to-send texts. A preference like *"speak at the end"* overrides the skill and
 breaks speak-before-text.
 
 Verify: send Claude a short message and confirm the reply is spoken without any

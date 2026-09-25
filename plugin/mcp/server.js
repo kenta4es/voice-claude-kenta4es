@@ -263,9 +263,24 @@ async function applyState() {
 // extension and any third-party caller. Reading a URL character by character is
 // the classic offender; so are the tool-usage lines the chat UI renders
 // ("Used Desktop Commander integration", "(3 actions) - 4 notes").
+// A fenced block is read aloud only if it is human prose (a ready-to-send text,
+// a quote) — mostly Cyrillic words, almost no code punctuation. Code, commands
+// and configs inside ``` are still skipped.
+function isProseBlock(body) {
+  const b = String(body);
+  const letters = (b.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
+  const cyr = (b.match(/[А-Яа-яЁё]/g) || []).length;
+  const codeChars = (b.match(/[{}[\];=<>$\\|]/g) || []).length;
+  if (letters < 3 || cyr < letters * 0.5) return false;
+  return codeChars <= Math.max(1, b.length * 0.01);
+}
+function readableFences(t) {
+  return String(t).replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => (isProseBlock(body) ? '\n' + body.trim() + '\n' : ' '));
+}
+
 function sanitizeForSpeech(input) {
   let t = String(input);
-  t = t.replace(/```[\s\S]*?```/g, ' ');                       // code blocks
+  t = readableFences(t);                                         // code blocks out, prose blocks kept
   t = t.replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ');      // "Used X integration"
   t = t.replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ');
   t = t.replace(/[·•][^\n]*\b(?:actions?|notes?)\b/gi, ' ');

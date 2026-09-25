@@ -2,6 +2,36 @@
 
 All notable changes to this project.
 
+## [1.2.7] — 2026-09-25
+
+Ready-to-send texts are read aloud; "quiet" really means quiet.
+
+### Fixed
+
+- **Texts shown in a frame were never spoken.** Claude puts ready-to-send
+  texts (an ad line, a message to a friend) in a fenced block, and every
+  layer — the skill, the server sanitizer and the auto-voicing watcher —
+  deleted fenced blocks as "code". Now a fenced block is read if it is human
+  prose (mostly Cyrillic words, almost no code punctuation); code, commands,
+  configs and English instructions are still skipped. Checked on 7 real
+  blocks from our chats: the ad text and the message were read, PowerShell,
+  JS and English instructions were not.
+- **«тихо» silenced Claude but not the auto-voicing.** When Claude stopped
+  calling `speak` in a chat, the `tts-watch` backstop kept reading its
+  replies. The watcher now understands the same words in the user's own
+  messages: «без озвучки», «не озвучивай», «выключи озвучку» (or a short
+  «тихо»/«молча») mute that chat until «включи озвучку». A long sentence that
+  merely contains «тихо» does not. Verified with a scripted 6-turn dry run.
+
+### Changed
+
+- **Skill `voice-output` rewritten to match the current stack:** read framed
+  human texts, don't voice intermediate notes, speech is queued with
+  «Следующее сообщение» (no interrupting), quiet mode, hotkey reference.
+- **CLAUDE.md:** check that the skill is switched ON (Settings → Capabilities
+  → Skills — per account, can't be set by an installer), and a recommended
+  VOICE line for the user's instructions.
+
 ## [1.2.6] — 2026-09-25
 
 One queue for everything, with an audible boundary between messages.
