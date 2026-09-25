@@ -4,7 +4,7 @@ All notable changes to this project.
 
 ## [1.2.7] — 2026-09-25
 
-Ready-to-send texts are read aloud; `/voice off` mutes a chat completely.
+Ready-to-send texts are read aloud; one `/voice` command toggles a chat's voice.
 
 ### Fixed
 
@@ -18,20 +18,26 @@ Ready-to-send texts are read aloud; `/voice off` mutes a chat completely.
   JS and English instructions were not.
 - **Muting a chat silenced Claude but not the auto-voicing.** When Claude
   stopped calling `speak` in a chat, the `tts-watch` backstop kept reading its
-  replies. Now there is one explicit per-chat switch understood by both:
-  **`/voice off`** at the start of a message mutes that chat, **`/voice on`**
-  unmutes it. Ordinary words («тихо», «без озвучки», «не озвучивай») switch
+  replies. Now there is one per-chat command understood by both: the new
+  skill **`/voice`**, a toggle — first call mutes the chat, the next one
+  unmutes it. Being a skill, it appears in the app's slash-command list. The
+  watcher reads the app's own record of the skill call
+  (`<command-name>/…voice</command-name>`) and only in real user messages,
+  and after a restart it restores each chat's state from its history (odd
+  number of toggles = muted). Ordinary words («тихо», «без озвучки») switch
   nothing — free text is too easy to misread. Global silence stays on
-  `Ctrl+Alt+A`. Verified with a scripted 6-turn dry run: plain words kept
-  the voice, `/voice off` muted, the command in the middle of a sentence was
-  ignored, `/Voice ON` (any case) unmuted.
+  `Ctrl+Alt+A`. Verified with a scripted dry run: plain words and "/voice off"
+  typed inside a sentence kept the voice; /voice muted, /voice unmuted,
+  /voice muted again; the tag inside tool output was ignored; after a
+  simulated restart the chat was correctly restored as muted.
 
 ### Changed
 
 - **Skill `voice-output` rewritten to match the current stack:** read framed
   human texts, don't voice intermediate notes, speech is queued with
-  «Следующее сообщение» (no interrupting), `/voice off|on`, and a list of all
-  voice controls Claude can tell the user about.
+  «Следующее сообщение» (no interrupting), the `/voice` toggle, and a list of
+  all voice controls Claude can tell the user about.
+- **New skill `voice`** (`plugin/skills/voice`) — the `/voice` toggle.
 - **CLAUDE.md:** check that the skill is switched ON (Settings → Capabilities
   → Skills — per account, can't be set by an installer), and a recommended
   VOICE line for the user's instructions.

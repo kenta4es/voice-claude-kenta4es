@@ -139,13 +139,45 @@ function isVoiceable(text) {
   return cyr > 0 && cyr >= lat * 0.5;
 }
 
-// Per-chat quiet mode — ONLY by an explicit command at the start of the user's
-// message: "/voice off" silences this chat, "/voice on" brings it back.
-// Ordinary words ("тихо", "без озвучки") never switch anything: free text is
-// too easy to misread. Global silence is the Ctrl+Alt+A hotkey.
+// Per-chat quiet mode — ONLY by the /voice skill command (a toggle). The app
+// records a skill call as <command-name>/voice</command-name> (or with a
+// plugin prefix, e.g. /anthropic-skills:voice). Ordinary words ("тихо",
+// "без озвучки") never switch anything. Global silence: Ctrl+Alt+A.
+const VOICE_CMD_RE = /<command-name>\/(?:[\w.-]+:)?voice<\/command-name>/g;
 function updateQuiet(st, text) {
-  const m = String(text || '').trim().match(/^\/voice\s+(off|on)\b/i);
-  if (m) st.quiet = m[1].toLowerCase() === 'off';
+  const n = (String(text || '').match(VOICE_CMD_RE) || []).length;
+  if (n % 2 === 1) st.quiet = !st.quiet;
+}
+// On first sight of a chat, replay its history: an odd number of /voice
+// toggles so far means the chat is muted. Read in chunks (logs can be huge).
+// Only real user messages count (not tool output, not code that mentions the tag).
+function countVoiceToggles(file, upto) {
+  let count = 0, pos = 0, rest = '';
+  const CH = 8 * 1024 * 1024;
+  const check = (line) => {
+    if (line.indexOf('command-name') === -1 || line.indexOf('"type":"user"') === -1) return;
+    try {
+      const ev = JSON.parse(line);
+      const c = ev.message && ev.message.content;
+      if (ev.tool_use_result || hasToolResult(c)) return;
+      count += (textOf(c).match(VOICE_CMD_RE) || []).length;
+    } catch {}
+  };
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(CH);
+    while (pos < upto) {
+      const n = fs.readSync(fd, buf, 0, Math.min(CH, upto - pos), pos);
+      if (n <= 0) break;
+      const lines = (rest + buf.toString('utf8', 0, n)).split('\n');
+      rest = lines.pop();
+      for (const line of lines) check(line);
+      pos += n;
+    }
+    if (rest) check(rest);
+    fs.closeSync(fd);
+  } catch {}
+  return count;
 }
 
 function flushTurn(file, st) {
@@ -208,7 +240,8 @@ function processFile(file) {
   let st = state.get(file);
   if (!st) {
     const baseEnd = firstTick;
-    st = { offset: baseEnd ? sz : 0, partial: '', sawSpeak: baseEnd, turnTexts: [], voiced: new Set(), seq: 0, lastToolSeq: -1 };
+    st = { offset: baseEnd ? sz : 0, partial: '', sawSpeak: baseEnd, turnTexts: [], voiced: new Set(), seq: 0, lastToolSeq: -1, quiet: false };
+    if (baseEnd) st.quiet = countVoiceToggles(file, sz) % 2 === 1;
     state.set(file, st);
     if (baseEnd) return;
   }
