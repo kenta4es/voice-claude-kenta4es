@@ -4,8 +4,9 @@
 // (type=result, or the next real user message), it decides PER TURN:
 //   - if the model called mcp__claude-tts__speak anywhere in the turn -> stay silent
 //     (the model is voicing it; avoids double);
-//   - otherwise -> voice every visible text block of the turn (intermediate
-//     preambles + final), in order, through the local TTS server.
+//   - otherwise -> voice only what the user reads in full: the final answer
+//     (text after the last tool call) and send_user_message messages.
+//     Narration between tool calls, API errors and English text are skipped.
 // Pure file reader: no model, no API tokens. Fail-safe: errors are swallowed.
 
 const fs = require('fs');
@@ -14,7 +15,8 @@ const http = require('http');
 
 const ROOTS = process.argv.slice(2);
 if (ROOTS.length === 0) {
-  ROOTS.push('C:\\Users\\Alexander\\AppData\\Roaming\\Claude\\local-agent-mode-sessions');
+  ROOTS.push(path.join(process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'),
+    'Claude', 'local-agent-mode-sessions'));
 }
 
 const TTS_HOST = '127.0.0.1';
@@ -113,11 +115,27 @@ function hasToolResult(c) {
   return asBlocks(c).some((b) => b && b.type === 'tool_result');
 }
 
+// Only what the user actually reads is voiced:
+//  - the final answer = text written AFTER the last tool call of the turn;
+//  - messages sent through send_user_message (shown verbatim).
+// Narration between tool calls ("Checking X:", often in English) is shown to the
+// user only as a summary, so it is skipped. API error lines and mostly-Latin
+// (English) text are skipped too — the voice is Russian.
+function isVoiceable(text) {
+  const t = String(text);
+  if (/^\s*(?:API Error|Failed to authenticate|Request not allowed)/i.test(t)) return false;
+  const cyr = (t.match(/[А-Яа-яЁё]/g) || []).length;
+  const lat = (t.match(/[A-Za-z]/g) || []).length;
+  return cyr > 0 && cyr >= lat * 0.5;
+}
+
 function flushTurn(file, st) {
   if (!st.sawSpeak) {
     for (const p of st.turnTexts) {
       if (st.voiced.has(p.uuid)) continue;
       st.voiced.add(p.uuid);
+      if (!p.direct && p.seq < st.lastToolSeq) continue; // narration between tool calls
+      if (!isVoiceable(p.text)) continue;
       const clean = stripMarkdown(p.text);
       if (clean) { postSpeak(clean); log('VOICE ' + path.basename(path.dirname(file)) + ' ' + clean.length + 'c'); }
     }
@@ -125,6 +143,7 @@ function flushTurn(file, st) {
     for (const p of st.turnTexts) st.voiced.add(p.uuid);
   }
   st.turnTexts = [];
+  st.lastToolSeq = -1;
   if (st.voiced.size > 2000) st.voiced.clear();
 }
 
@@ -144,8 +163,21 @@ function handleEvent(file, st, ev) {
   if (type === 'result') { flushTurn(file, st); st.sawSpeak = false; return; }
   if (type === 'assistant' || role === 'assistant') {
     if (hasSpeak(content)) st.sawSpeak = true;
-    const t = textOf(content);
-    if (t && t.trim()) st.turnTexts.push({ uuid: ev.uuid || ('t' + Date.now() + Math.random()), text: t });
+    const base = ev.uuid || ('t' + Date.now() + Math.random());
+    asBlocks(content).forEach((b, i) => {
+      if (!b) return;
+      const seq = (st.seq = (st.seq || 0) + 1);
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+        st.turnTexts.push({ uuid: base + ':' + i, text: b.text, seq });
+      } else if (b.type === 'tool_use') {
+        const msgText = b.input && typeof b.input.message === 'string' ? b.input.message : '';
+        if (/send_user_message/i.test(b.name || '') && msgText.trim()) {
+          st.turnTexts.push({ uuid: base + ':' + i, text: msgText, seq, direct: true });
+        } else {
+          st.lastToolSeq = seq;
+        }
+      }
+    });
   }
 }
 
@@ -155,7 +187,7 @@ function processFile(file) {
   let st = state.get(file);
   if (!st) {
     const baseEnd = firstTick;
-    st = { offset: baseEnd ? sz : 0, partial: '', sawSpeak: baseEnd, turnTexts: [], voiced: new Set() };
+    st = { offset: baseEnd ? sz : 0, partial: '', sawSpeak: baseEnd, turnTexts: [], voiced: new Set(), seq: 0, lastToolSeq: -1 };
     state.set(file, st);
     if (baseEnd) return;
   }
@@ -192,5 +224,5 @@ function tick() {
 
 setInterval(tick, POLL_MS);
 tick();
-log('started v3 (turn-based); roots=' + ROOTS.join(' ; '));
-console.log('tts-watch v3 started');
+log('started v4 (final answers only); roots=' + ROOTS.join(' ; '));
+console.log('tts-watch v4 started');

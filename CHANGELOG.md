@@ -2,6 +2,33 @@
 
 All notable changes to this project.
 
+## [1.2.5] — 2026-09-25
+
+Auto-voicing reads only what you actually see.
+
+### Fixed
+
+- **Auto-voicing read Claude's intermediate steps aloud** — the short notes
+  written between tool calls ("Checking what's available for Georgia:",
+  "Reading it in the browser:"), usually in English, plus API error lines
+  ("Failed to authenticate. API Error: 403"). Cowork shows those notes only
+  folded into steps, so they sounded like random system chatter. The watcher
+  (`tts-watch.cjs`, v4) now voices only the final answer — text after the
+  last tool call — and messages sent to the user mid-task
+  (`send_user_message`). Narration, API errors and mostly-English text are
+  skipped. Verified with a dry run over a real 1,228-turn chat: only the
+  Russian final answers remained.
+- **The watcher only worked on the author's PC.** The Cowork sessions folder
+  was hard-coded as `C:\Users\Alexander\…`; it is now taken from `%APPDATA%`.
+
+### Tip
+
+Claude may write those intermediate notes in English even when told to
+"respond in Russian" — it treats them as internal. To get Russian
+everywhere, put this in Settings → Account → *Instructions for Claude*:
+`Russian for ALL text — final answers, intermediate notes between tool
+calls, progress messages, questions, summaries. Never switch to English.`
+
 ## [1.2.4] — 2026-09-24
 
 Night mode: silence the voice with one key, without closing anything.
