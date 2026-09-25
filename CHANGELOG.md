@@ -4,7 +4,7 @@ All notable changes to this project.
 
 ## [1.2.7] — 2026-09-25
 
-Ready-to-send texts are read aloud; "quiet" really means quiet.
+Ready-to-send texts are read aloud; `/voice off` mutes a chat completely.
 
 ### Fixed
 
@@ -16,18 +16,22 @@ Ready-to-send texts are read aloud; "quiet" really means quiet.
   configs and English instructions are still skipped. Checked on 7 real
   blocks from our chats: the ad text and the message were read, PowerShell,
   JS and English instructions were not.
-- **«тихо» silenced Claude but not the auto-voicing.** When Claude stopped
-  calling `speak` in a chat, the `tts-watch` backstop kept reading its
-  replies. The watcher now understands the same words in the user's own
-  messages: «без озвучки», «не озвучивай», «выключи озвучку» (or a short
-  «тихо»/«молча») mute that chat until «включи озвучку». A long sentence that
-  merely contains «тихо» does not. Verified with a scripted 6-turn dry run.
+- **Muting a chat silenced Claude but not the auto-voicing.** When Claude
+  stopped calling `speak` in a chat, the `tts-watch` backstop kept reading its
+  replies. Now there is one explicit per-chat switch understood by both:
+  **`/voice off`** at the start of a message mutes that chat, **`/voice on`**
+  unmutes it. Ordinary words («тихо», «без озвучки», «не озвучивай») switch
+  nothing — free text is too easy to misread. Global silence stays on
+  `Ctrl+Alt+A`. Verified with a scripted 6-turn dry run: plain words kept
+  the voice, `/voice off` muted, the command in the middle of a sentence was
+  ignored, `/Voice ON` (any case) unmuted.
 
 ### Changed
 
 - **Skill `voice-output` rewritten to match the current stack:** read framed
   human texts, don't voice intermediate notes, speech is queued with
-  «Следующее сообщение» (no interrupting), quiet mode, hotkey reference.
+  «Следующее сообщение» (no interrupting), `/voice off|on`, and a list of all
+  voice controls Claude can tell the user about.
 - **CLAUDE.md:** check that the skill is switched ON (Settings → Capabilities
   → Skills — per account, can't be set by an installer), and a recommended
   VOICE line for the user's instructions.

@@ -91,6 +91,8 @@ All hotkeys use **Left Ctrl + Left Alt** + key, with physical scan codes so they
 | `LCtrl + LAlt + =` (the `+` key) or numpad `+` | Voice volume +10 | "Громкость озвучки: 80%" |
 | `LCtrl + LAlt + -` or numpad `-` | Voice volume −10 | "Громкость озвучки: 60%" |
 
+**Per-chat switch: `/voice off` / `/voice on`.** Start a message to Claude with `/voice off` to silence that one chat — both Claude's own voice and the auto-voicing; `/voice on` brings it back. Only the command works: ordinary words like «тихо» or «без озвучки» switch nothing, so casual text is never misread. For silence everywhere use `Ctrl+Alt+A`.
+
 **Queue.** Nothing interrupts anything: replies from different chats and `Ctrl+Alt+Z` selections are queued. When a new message arrives while another is still playing, the engine inserts a 2-second pause and says «Следующее сообщение» before it, so separate messages are easy to tell apart. `Ctrl+Alt+C` stops the voice and clears the whole queue.
 
 Volume keys change only the voice, not Windows volume. Mute and volume survive `Ctrl+Alt+R`, engine crashes and reboots. Note: `Ctrl+Alt+A` is captured in every app.

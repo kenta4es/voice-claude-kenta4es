@@ -129,7 +129,8 @@ with the skill. Recommended line for Settings → Account → Instructions for C
 `VOICE: Call mcp__claude-tts__speak FIRST in every reply. Speak text = final chat
 text verbatim, minus markdown, paths, URLs and code. Fenced blocks with
 human-language text (ready-to-send messages, quotes) ARE read aloud. Don't voice
-intermediate notes. «тихо» / «без озвучки» = stop until «включи озвучку».`
+intermediate notes. "/voice off" at the start of my message = stop voicing this chat until "/voice on"; ordinary words never switch voice.`
+Tell the user about `/voice off` / `/voice on` (this chat) and `Ctrl+Alt+A` (everywhere).
 A stale line like *"minus markdown/code"* makes Claude skip ready-to-send texts. A preference like *"speak at the end"* overrides the skill and
 breaks speak-before-text.
 

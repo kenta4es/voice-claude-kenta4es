@@ -139,15 +139,13 @@ function isVoiceable(text) {
   return cyr > 0 && cyr >= lat * 0.5;
 }
 
-// Per-chat quiet mode, driven by the user's own words in that chat:
-// «без озвучки» / «не озвучивай» / «выключи озвучку» (or a short «тихо»/«молча»)
-// silence auto-voicing for that chat until «включи озвучку».
+// Per-chat quiet mode — ONLY by an explicit command at the start of the user's
+// message: "/voice off" silences this chat, "/voice on" brings it back.
+// Ordinary words ("тихо", "без озвучки") never switch anything: free text is
+// too easy to misread. Global silence is the Ctrl+Alt+A hotkey.
 function updateQuiet(st, text) {
-  const t = String(text || '').toLowerCase();
-  if (!t.trim()) return;
-  if (/включи(те)?\s+озвучк/.test(t)) { st.quiet = false; return; }
-  if (/без\s+озвучк|не\s+озвучивай|выключи(те)?\s+озвучк/.test(t)) { st.quiet = true; return; }
-  if (t.trim().length <= 40 && /(^|[^а-яё])(тихо|молча)([^а-яё]|$)/.test(t)) st.quiet = true;
+  const m = String(text || '').trim().match(/^\/voice\s+(off|on)\b/i);
+  if (m) st.quiet = m[1].toLowerCase() === 'off';
 }
 
 function flushTurn(file, st) {
