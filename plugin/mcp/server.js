@@ -11,7 +11,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -270,7 +270,8 @@ function isProseBlock(body) {
   const b = String(body);
   const letters = (b.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
   const cyr = (b.match(/[А-Яа-яЁё]/g) || []).length;
-  const codeChars = (b.match(/[{}[\];=<>$\\|]/g) || []).length;
+  // "$" is NOT a code sign here: prices ("50 $") are common in human texts.
+  const codeChars = (b.match(/[{}[\];=<>\\|]|\$[({A-Za-z_]/g) || []).length;
   if (letters < 3 || cyr < letters * 0.5) return false;
   return codeChars <= Math.max(1, b.length * 0.01);
 }
@@ -293,7 +294,8 @@ function sanitizeForSpeech(input) {
   t = t.replace(/\bhttps?:\/\/\S+/gi, ' ');                     // full URLs
   t = t.replace(/\bwww\.\S+/gi, ' ');
   t = t.replace(/\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|ru|org|net|io|ai|dev|me|app|co|edu|gov|info|xyz)\b(?:\/\S*)?/gi, ' ');
-  t = t.replace(/[A-Za-z]:\\[^\s)"']+/g, ' ');                  // windows paths
+  t = t.replace(/^[ \t]*\|.*\|[ \t]*$/gm, ' ');                 // markdown tables: not read aloud
+  t = t.replace(/[A-Za-z]:[\\/][^\n\])"]*/g, ' ');              // windows paths, spaces included
   t = t.replace(/`([^`]+)`/g, '$1');                            // inline code marks
   t = t.replace(/(\*\*|__)(.*?)\1/g, '$2');
   t = t.replace(/^\s{0,3}#{1,6}\s+/gm, '');
@@ -302,8 +304,19 @@ function sanitizeForSpeech(input) {
   return t.trim();
 }
 
+// Every speak request is logged (time, size, start of text) so voicing can be
+// verified from the log instead of by ear.
+const SPEAK_LOG = join(PSDIR, 'speak.log');
+function logSpeak(raw, payload, queue) {
+  try {
+    const head = String(payload).replace(/\s+/g, ' ').slice(0, 70);
+    appendFileSync(SPEAK_LOG, `${new Date().toISOString()} ${queue ? 'Q' : 'N'} in=${String(raw).length} out=${String(payload).length} | ${head}\n`);
+  } catch {}
+}
+
 function speakAsync(text, queue = false) {
   let payload = sanitizeForSpeech(text);
+  logSpeak(text, payload, queue);
   if (!payload) return Promise.resolve('EMPTY');
   if (state.removePunctuationPauses) payload = payload.replace(/\s+/g, ' ');
   const b64 = Buffer.from(payload, 'utf8').toString('base64');

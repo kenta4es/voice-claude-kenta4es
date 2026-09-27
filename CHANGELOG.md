@@ -2,6 +2,38 @@
 
 All notable changes to this project.
 
+## [1.2.8] — 2026-09-27
+
+Voice works in cloud Cowork chats; auto-voicing never drops a block or reads twice.
+
+### Fixed
+
+- **Cloud Cowork chats were silent.** Some Cowork chats run on Anthropic's
+  servers with the computer attached as a device. They write no local
+  `audit.jsonl`, so `tts-watch` can't see them, and the skill had told Claude
+  to leave the final answer to the watcher. Now the skill says: in *every*
+  chat, call `speak` first with the whole reply (in cloud chats the tool may be
+  named `mcp__remote-devices__claude-tts__speak`). Verified: two cloud chats
+  that were silent are now voiced.
+- **Auto-voicing dropped blocks when Claude had called `speak` itself.** The
+  watcher used to stay silent for the whole turn. Now it reads the final
+  answer from the screen and voices only the paragraphs Claude did not speak,
+  compared by pairs of consecutive words — a new block that merely shares
+  vocabulary is still read, a paragraph already spoken is not repeated.
+- **Mid-task messages to the user** (`send_user_message`) are voiced at once,
+  unless Claude already spoke them.
+- **A line with a price in dollars was treated as code** and skipped. `$` is no
+  longer a code sign (only `$var`, `$(`, `${`).
+- **Markdown tables were read aloud** cell by cell; now skipped. **Windows paths
+  with spaces** were cut in half; now removed whole.
+
+### Added
+
+- `speak.log` next to the server: time, size and start of every speak request,
+  so voicing can be checked from the log instead of by ear.
+- CLAUDE.md: what cloud Cowork chats are and why they depend on the skill;
+  VOICE line updated.
+
 ## [1.2.7] — 2026-09-25
 
 Ready-to-send texts are read aloud; one `/voice` command toggles a chat's voice.

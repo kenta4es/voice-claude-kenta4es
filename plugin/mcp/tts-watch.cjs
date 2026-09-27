@@ -57,7 +57,8 @@ function isProseBlock(body) {
   const b = String(body);
   const letters = (b.match(/[A-Za-zА-Яа-яЁё]/g) || []).length;
   const cyr = (b.match(/[А-Яа-яЁё]/g) || []).length;
-  const codeChars = (b.match(/[{}[\];=<>$\\|]/g) || []).length;
+  // "$" is NOT a code sign here: prices ("50 $") are common in human texts.
+  const codeChars = (b.match(/[{}[\];=<>\\|]|\$[({A-Za-z_]/g) || []).length;
   if (letters < 3 || cyr < letters * 0.5) return false;
   return codeChars <= Math.max(1, b.length * 0.01);
 }
@@ -79,7 +80,8 @@ function stripMarkdown(t) {
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[A-Za-z]:\\[^\s)]+/g, ' ')
+    .replace(/^[ \t]*\|.*\|[ \t]*$/gm, ' ')          // markdown tables: not read aloud
+    .replace(/[A-Za-z]:[\\/][^\n\])"]*/g, ' ')       // Windows paths, spaces included, to end of line
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')
     .replace(/^\s{0,3}>\s?/gm, '')
     .replace(/^\s*[-*+]\s+/gm, '')
@@ -180,23 +182,70 @@ function countVoiceToggles(file, upto) {
   return count;
 }
 
+// ---- What was already spoken this turn (Claude's own speak calls) ----------
+// Words of >=3 letters, lower-case, ё→е. Used to avoid reading twice what the
+// model has already voiced itself.
+function words(t) {
+  return (String(t).toLowerCase().replace(/ё/g, 'е').match(/[a-zа-я0-9]{3,}/g) || []);
+}
+// Compare by PAIRS of consecutive words, not single words: a new block that only
+// shares vocabulary with what was said ("ChatGPT Plus", "месяц") must still be
+// read; a paragraph Claude actually spoke shares its word pairs.
+function pairs(t) {
+  const w = words(t), out = [];
+  for (let i = 0; i + 1 < w.length; i++) out.push(w[i] + ' ' + w[i + 1]);
+  return out;
+}
+function coverage(text, spokenBag) {
+  const p = pairs(text);
+  if (!p.length) return words(text).length ? 0 : 1;
+  const bag = new Map(spokenBag);
+  let hit = 0;
+  for (const x of p) { const n = bag.get(x) || 0; if (n > 0) { hit++; bag.set(x, n - 1); } }
+  return hit / p.length;
+}
+function spokenBagOf(st) {
+  const bag = new Map();
+  for (const s of st.spoken || []) for (const x of pairs(s)) bag.set(x, (bag.get(x) || 0) + 1);
+  return bag;
+}
+const COVERED = 0.5; // a paragraph whose word pairs were at least half spoken is not read again
+
+// Final answer, read from the SCREEN after it is written: only paragraphs the
+// model has not already voiced (so blocks and text after them are never lost,
+// and nothing is read twice).
 function flushTurn(file, st) {
-  if (st.quiet) { for (const p of st.turnTexts) st.voiced.add(p.uuid); st.turnTexts = []; st.lastToolSeq = -1; return; }
-  if (!st.sawSpeak) {
-    for (const p of st.turnTexts) {
-      if (st.voiced.has(p.uuid)) continue;
-      st.voiced.add(p.uuid);
-      if (!p.direct && p.seq < st.lastToolSeq) continue; // narration between tool calls
-      if (!isVoiceable(p.text)) continue;
-      const clean = stripMarkdown(p.text);
-      if (clean) { postSpeak(clean); log('VOICE ' + path.basename(path.dirname(file)) + ' ' + clean.length + 'c'); }
+  const reset = () => { st.turnTexts = []; st.lastToolSeq = -1; st.spoken = []; if (st.voiced.size > 2000) st.voiced.clear(); };
+  if (st.quiet) { for (const p of st.turnTexts) st.voiced.add(p.uuid); return reset(); }
+  const bag = spokenBagOf(st);
+  const parts = [];
+  for (const p of st.turnTexts) {
+    if (st.voiced.has(p.uuid)) continue;
+    st.voiced.add(p.uuid);
+    if (p.direct) continue;                  // mid-task messages were voiced on arrival
+    if (p.seq < st.lastToolSeq) continue;    // narration between tool calls
+    if (!isVoiceable(p.text)) continue;
+    for (const para of stripMarkdown(p.text).split(/\n\s*\n/)) {
+      const t = para.trim();
+      if (!t || !/[А-Яа-яЁё]/.test(t)) continue;
+      if (coverage(t, bag) >= COVERED) continue;
+      parts.push(t);
     }
-  } else {
-    for (const p of st.turnTexts) st.voiced.add(p.uuid);
   }
-  st.turnTexts = [];
-  st.lastToolSeq = -1;
-  if (st.voiced.size > 2000) st.voiced.clear();
+  const out = parts.join('\n\n').trim();
+  if (out) { postSpeak(out); log('VOICE ' + path.basename(path.dirname(file)) + ' final ' + out.length + 'c'); }
+  reset();
+}
+
+// Mid-task message to the user (send_user_message): voice it right away,
+// unless Claude already spoke it.
+function voiceDirectNow(file, st, item) {
+  if (st.quiet || st.voiced.has(item.uuid)) return;
+  st.voiced.add(item.uuid);
+  if (!isVoiceable(item.text)) return;
+  const t = stripMarkdown(item.text);
+  if (!t || coverage(t, spokenBagOf(st)) >= COVERED) return;
+  postSpeak(t); log('VOICE ' + path.basename(path.dirname(file)) + ' message ' + t.length + 'c');
 }
 
 function handleEvent(file, st, ev) {
@@ -207,15 +256,13 @@ function handleEvent(file, st, ev) {
 
   if (type === 'user' || role === 'user') {
     if (!ev.tool_use_result && !hasToolResult(content)) {
-      flushTurn(file, st);     // close previous turn with its own sawSpeak
-      st.sawSpeak = false;     // new user turn begins
+      flushTurn(file, st);     // close the previous turn
       updateQuiet(st, textOf(content));
     }
     return;
   }
-  if (type === 'result') { flushTurn(file, st); st.sawSpeak = false; return; }
+  if (type === 'result') { flushTurn(file, st); return; }
   if (type === 'assistant' || role === 'assistant') {
-    if (hasSpeak(content)) st.sawSpeak = true;
     const base = ev.uuid || ('t' + Date.now() + Math.random());
     asBlocks(content).forEach((b, i) => {
       if (!b) return;
@@ -223,9 +270,17 @@ function handleEvent(file, st, ev) {
       if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
         st.turnTexts.push({ uuid: base + ':' + i, text: b.text, seq });
       } else if (b.type === 'tool_use') {
-        const msgText = b.input && typeof b.input.message === 'string' ? b.input.message : '';
-        if (/send_user_message/i.test(b.name || '') && msgText.trim()) {
-          st.turnTexts.push({ uuid: base + ':' + i, text: msgText, seq, direct: true });
+        const name = b.name || '';
+        const inp = b.input || {};
+        if (/claude-tts__speak$/i.test(name) || /(^|__)speak$/i.test(name)) {
+          (st.spoken = st.spoken || []).push(String(inp.text || ''));   // voiced by Claude itself
+          return;                                                      // not a "real" tool call
+        }
+        const msgText = typeof inp.message === 'string' ? inp.message : '';
+        if (/send_user_message/i.test(name) && msgText.trim()) {
+          const item = { uuid: base + ':' + i, text: msgText, seq, direct: true };
+          st.turnTexts.push(item);
+          voiceDirectNow(file, st, item);
         } else {
           st.lastToolSeq = seq;
         }

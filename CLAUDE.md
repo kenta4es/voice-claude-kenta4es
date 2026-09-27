@@ -128,8 +128,17 @@ set from the repository or by an installer — the user flips it once.
 with the skill. Recommended line for Settings → Account → Instructions for Claude:
 `VOICE: Call mcp__claude-tts__speak FIRST in every reply. Speak text = final chat
 text verbatim, minus markdown, paths, URLs and code. Fenced blocks with
-human-language text (ready-to-send messages, quotes) ARE read aloud. Don't voice
-intermediate notes. The /voice command toggles voice in this chat; ordinary words never switch it.`
+human-language text (ready-to-send messages, quotes) ARE read aloud. Voice short
+progress messages the same way, right away. In cloud sessions the tool may be named
+mcp__remote-devices__claude-tts__speak — use whichever exists. The /voice command
+toggles voice in this chat; ordinary words never switch it.`
+
+**Cloud (remote) Cowork sessions.** A Cowork chat can run on Anthropic's servers
+with the computer attached as a device instead of running locally. Such chats
+write no local `audit.jsonl`, so `tts-watch` cannot see them; they are voiced
+only when Claude itself calls `speak` (the local claude-tts server is bridged to
+them). That is why the skill tells Claude to call `speak` in every chat.
+
 Also make sure the `voice` skill (the `/voice` toggle) is switched ON, and tell
 the user about `/voice` (this chat, a toggle) and `Ctrl+Alt+A` (everywhere).
 A stale line like *"minus markdown/code"* makes Claude skip ready-to-send texts. A preference like *"speak at the end"* overrides the skill and
