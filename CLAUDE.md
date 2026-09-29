@@ -274,8 +274,14 @@ Do not report success until you have personally confirmed:
 4. `Ctrl+Alt+X` pauses it, `Ctrl+Alt+C` stops it
 5. A Claude reply is spoken automatically
 
-Then tell the user, in one short message: which voice is active, the five
-hotkeys, and the single rule — *"if it goes silent, press Ctrl+Alt+R."*
+Then tell the user, in one short message (in their language): which voice is
+active, the five hotkeys, and the two rules:
+
+- *"If there is no sound at all — press Ctrl+Alt+R."*
+- *"If some chat stops voicing Claude's answers by itself (other chats still speak),
+  write in that chat: «озвучивай каждый ответ через speak». One message is
+  enough; new chats speak on their own."* (Why: a chat that already has many
+  silent replies keeps the habit even with correct rules — see section 4.)
 
 ---
 
