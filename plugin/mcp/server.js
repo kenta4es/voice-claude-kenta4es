@@ -307,11 +307,49 @@ function sanitizeForSpeech(input) {
 // Every speak request is logged (time, size, start of text) so voicing can be
 // verified from the log instead of by ear.
 const SPEAK_LOG = join(PSDIR, 'speak.log');
-function logSpeak(raw, payload, queue) {
+function logSpeak(raw, payload, queue, mark) {
   try {
-    const head = String(payload).replace(/\s+/g, ' ').slice(0, 70);
-    appendFileSync(SPEAK_LOG, `${new Date().toISOString()} ${queue ? 'Q' : 'N'} in=${String(raw).length} out=${String(payload).length} | ${head}\n`);
+    const head = String(payload || raw).replace(/\s+/g, ' ').slice(0, 70);
+    appendFileSync(SPEAK_LOG, `${new Date().toISOString()} ${mark || (queue ? 'Q' : 'N')} in=${String(raw).length} out=${String(payload).length} | ${head}\n`);
   } catch {}
+}
+
+// ---- One voice per chat -------------------------------------------------------
+// In LOCAL Cowork chats the tts-watch backstop reads the final answer verbatim
+// from the screen. If Claude also calls speak there (usually with a shortened
+// retelling), the user hears the answer twice. The watcher sees Claude's speak
+// call in the chat log 2-5 s BEFORE the call reaches this server and registers
+// its text via POST /suppress. Every speak that does not come from the watcher
+// is held HOLD_MS, then dropped if it was registered. Cloud chats have no local
+// log, nothing registers them, so Claude's own speak plays there (1.5 s later).
+const HOLD_MS = 1500;
+const SUPPRESS_TTL_MS = 5 * 60 * 1000;
+const suppressed = new Map();   // key -> expiry
+const playedModel = new Map();  // key -> expiry (model speech already played)
+function speechKey(t) {
+  return String(t).toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, '').slice(0, 300);
+}
+function prune(m) { const now = Date.now(); for (const [k, exp] of m) if (exp < now) m.delete(k); }
+// Returns 'OK' (will be dropped) or 'PLAYED' (too late, already spoken).
+function registerSuppress(text) {
+  prune(suppressed); prune(playedModel);
+  const k = speechKey(text);
+  if (!k) return 'EMPTY';
+  if (playedModel.has(k)) return 'PLAYED';
+  suppressed.set(k, Date.now() + SUPPRESS_TTL_MS);
+  return 'OK';
+}
+function speakFromModel(text, queue = false) {
+  setTimeout(() => {
+    const k = speechKey(text);
+    if (k && suppressed.has(k)) {
+      suppressed.delete(k);
+      logSpeak(text, '', queue, 'S');   // S = skipped: local chat, the watcher reads the screen
+      return;
+    }
+    if (k) playedModel.set(k, Date.now() + SUPPRESS_TTL_MS);
+    speakAsync(text, queue);
+  }, HOLD_MS);
 }
 
 function speakAsync(text, queue = false) {
@@ -382,16 +420,26 @@ const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   // POST /speak with body = text to speak
   if (req.method === 'POST' && req.url.startsWith('/speak')) {
-    const queue = new URL(req.url, 'http://127.0.0.1').searchParams.get('queue') === '1';
+    const sp = new URL(req.url, 'http://127.0.0.1').searchParams;
+    const queue = sp.get('queue') === '1';
+    const fromWatch = sp.get('src') === 'watch';
     let body = '';
     req.setEncoding('utf8');
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
       const text = body.trim();
       if (!text) { res.statusCode = 400; res.end('empty'); return; }
-      speakAsync(text, queue);
+      if (fromWatch) speakAsync(text, queue); else speakFromModel(text, queue);
       res.end(`Speaking ${text.length} chars${queue ? ' (queued)' : ''}`);
     });
+    return;
+  }
+  // POST /suppress with body = text of a speak call seen in a LOCAL chat log.
+  if (req.method === 'POST' && req.url.startsWith('/suppress')) {
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => { res.end(registerSuppress(body)); });
     return;
   }
   // Parse pathname + query (req.url is path+query).
@@ -587,7 +635,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const queue = args.queue === true;
         if (!text) return { content: [{ type: 'text', text: 'empty text, skipped' }] };
         if (isHttpOwner) {
-          speakAsync(text, queue); // fire and forget
+          speakFromModel(text, queue); // fire and forget; held, may be suppressed
         } else {
           try { await forwardHttp('POST', `/speak${queue ? '?queue=1' : ''}`, text); } catch (e) { return { content: [{ type: 'text', text: `forward error: ${e.message}` }], isError: true }; }
         }

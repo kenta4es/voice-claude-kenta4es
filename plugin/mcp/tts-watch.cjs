@@ -96,11 +96,11 @@ function stripMarkdown(t) {
     .trim();
 }
 
-function postSpeak(text) {
+function postSpeak(text, queue) {
   try {
     const body = Buffer.from(text.slice(0, MAX_CHARS), 'utf8');
     const req = http.request({
-      host: TTS_HOST, port: TTS_PORT, path: '/speak', method: 'POST',
+      host: TTS_HOST, port: TTS_PORT, path: '/speak?src=watch' + (queue ? '&queue=1' : ''), method: 'POST',
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': body.length },
       timeout: 4000,
     }, (res) => { res.resume(); });
@@ -108,6 +108,28 @@ function postSpeak(text) {
     req.on('timeout', () => { try { req.destroy(); } catch {} });
     req.write(body); req.end();
   } catch {}
+}
+
+// Claude called speak in a LOCAL chat: ask the server to drop that speech — the
+// final answer is read verbatim from the screen instead (one voice, no repeats).
+// If the server says it was already played (we were too late), fall back to
+// skipping what Claude spoke.
+function postSuppress(text, onPlayed) {
+  try {
+    const body = Buffer.from(String(text), 'utf8');
+    const req = http.request({
+      host: TTS_HOST, port: TTS_PORT, path: '/suppress', method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': body.length },
+      timeout: 3000,
+    }, (res) => {
+      let r = ''; res.setEncoding('utf8');
+      res.on('data', (d) => { r += d; });
+      res.on('end', () => { if (r.trim() !== 'OK') onPlayed(); });
+    });
+    req.on('error', () => onPlayed());
+    req.on('timeout', () => { try { req.destroy(); } catch {} });
+    req.write(body); req.end();
+  } catch { onPlayed(); }
 }
 
 function asBlocks(c) {
@@ -211,30 +233,75 @@ function spokenBagOf(st) {
 }
 const COVERED = 0.5; // a paragraph whose word pairs were at least half spoken is not read again
 
-// Final answer, read from the SCREEN after it is written: only paragraphs the
-// model has not already voiced (so blocks and text after them are never lost,
-// and nothing is read twice).
-function flushTurn(file, st) {
-  const reset = () => { st.turnTexts = []; st.lastToolSeq = -1; st.spoken = []; if (st.voiced.size > 2000) st.voiced.clear(); };
-  if (st.quiet) { for (const p of st.turnTexts) st.voiced.add(p.uuid); return reset(); }
+// Claude often voices a SHORTENED retelling of its answer, not the exact text:
+// word pairs then barely match and the watcher used to read the whole answer a
+// second time. So ordinary paragraphs are compared by word STEMS (first 5
+// letters of words of 4+ letters — survives Russian endings and rewording):
+// half of the stems already spoken = the paragraph was voiced. Ready-to-send
+// texts in a frame stay on the strict pair test: those must be read as written.
+function stems(t) { return words(t).filter((w) => w.length >= 4).map((w) => w.slice(0, 5)); }
+function stemCoverage(text, spokenStems) {
+  const s = stems(text);
+  if (!s.length) return words(text).length ? 0 : 1;
+  let hit = 0;
+  for (const x of s) if (spokenStems.has(x)) hit++;
+  return hit / s.length;
+}
+function spokenStemsOf(st) {
+  const set = new Set();
+  for (const s of st.spoken || []) for (const x of stems(s)) set.add(x);
+  return set;
+}
+function proseBlocksOf(text) {
+  const out = [];
+  String(text).replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => { if (isProseBlock(body)) out.push(body); return m; });
+  return out.join('\n');
+}
+// Was this paragraph already voiced by Claude itself?
+function alreadySpoken(t, bag, stemSet, blocksText) {
+  const fromBlock = blocksText && coverage(t, (() => {
+    const m = new Map(); for (const x of pairs(blocksText)) m.set(x, (m.get(x) || 0) + 1); return m;
+  })()) >= 0.8;
+  if (fromBlock) return coverage(t, bag) >= COVERED;
+  return stemCoverage(t, stemSet) >= COVERED;
+}
+
+// Final answer, read from the SCREEN after it is written.
+// Everything written on screen so far in this turn and not yet voiced is read
+// now: called when Claude starts a tool (the text before it is a progress line
+// the user sees — «Проверяю журнал…») and at the end of the turn (the final
+// answer). Only Russian text is voiced; English lines are skipped. The first
+// piece of a turn starts a new message, the rest continue it (no «Следующее
+// сообщение» between progress lines of the same answer).
+function voicePending(file, st, kind) {
+  if (st.quiet) { for (const p of st.turnTexts) st.voiced.add(p.uuid); return; }
   const bag = spokenBagOf(st);
+  const stemSet = spokenStemsOf(st);
   const parts = [];
   for (const p of st.turnTexts) {
     if (st.voiced.has(p.uuid)) continue;
     st.voiced.add(p.uuid);
     if (p.direct) continue;                  // mid-task messages were voiced on arrival
-    if (p.seq < st.lastToolSeq) continue;    // narration between tool calls
     if (!isVoiceable(p.text)) continue;
+    const blocksText = proseBlocksOf(p.text);
     for (const para of stripMarkdown(p.text).split(/\n\s*\n/)) {
       const t = para.trim();
       if (!t || !/[А-Яа-яЁё]/.test(t)) continue;
-      if (coverage(t, bag) >= COVERED) continue;
+      if (alreadySpoken(t, bag, stemSet, blocksText)) continue;
       parts.push(t);
     }
   }
   const out = parts.join('\n\n').trim();
-  if (out) { postSpeak(out); log('VOICE ' + path.basename(path.dirname(file)) + ' final ' + out.length + 'c'); }
-  reset();
+  if (out) {
+    postSpeak(out, !!st.turnVoiced);
+    st.turnVoiced = true;
+    log('VOICE ' + path.basename(path.dirname(file)) + ' ' + kind + ' ' + out.length + 'c');
+  }
+}
+function flushTurn(file, st) {
+  voicePending(file, st, 'final');
+  st.turnTexts = []; st.lastToolSeq = -1; st.spoken = []; st.turnVoiced = false;
+  if (st.voiced.size > 2000) st.voiced.clear();
 }
 
 // Mid-task message to the user (send_user_message): voice it right away,
@@ -244,8 +311,9 @@ function voiceDirectNow(file, st, item) {
   st.voiced.add(item.uuid);
   if (!isVoiceable(item.text)) return;
   const t = stripMarkdown(item.text);
-  if (!t || coverage(t, spokenBagOf(st)) >= COVERED) return;
-  postSpeak(t); log('VOICE ' + path.basename(path.dirname(file)) + ' message ' + t.length + 'c');
+  if (!t || alreadySpoken(t, spokenBagOf(st), spokenStemsOf(st), proseBlocksOf(item.text))) return;
+  postSpeak(t, !!st.turnVoiced); st.turnVoiced = true;
+  log('VOICE ' + path.basename(path.dirname(file)) + ' message ' + t.length + 'c');
 }
 
 function handleEvent(file, st, ev) {
@@ -273,7 +341,10 @@ function handleEvent(file, st, ev) {
         const name = b.name || '';
         const inp = b.input || {};
         if (/claude-tts__speak$/i.test(name) || /(^|__)speak$/i.test(name)) {
-          (st.spoken = st.spoken || []).push(String(inp.text || ''));   // voiced by Claude itself
+          const said = String(inp.text || '');
+          // Drop Claude's own speech; the screen text is read instead. If it
+          // already played, remember it so it is not read a second time.
+          postSuppress(said, () => { (st.spoken = st.spoken || []).push(said); });
           return;                                                      // not a "real" tool call
         }
         const msgText = typeof inp.message === 'string' ? inp.message : '';
@@ -283,6 +354,7 @@ function handleEvent(file, st, ev) {
           voiceDirectNow(file, st, item);
         } else {
           st.lastToolSeq = seq;
+          voicePending(file, st, 'step');   // progress line written before this tool
         }
       }
     });

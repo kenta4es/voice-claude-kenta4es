@@ -126,18 +126,31 @@ set from the repository or by an installer — the user flips it once.
 
 **Critical:** if the user keeps a personal preference about voice, it must agree
 with the skill. Recommended line for Settings → Account → Instructions for Claude:
-`VOICE: Call mcp__claude-tts__speak FIRST in every reply. Speak text = final chat
-text verbatim, minus markdown, paths, URLs and code. Fenced blocks with
-human-language text (ready-to-send messages, quotes) ARE read aloud. Voice short
-progress messages the same way, right away. In cloud sessions the tool may be named
-mcp__remote-devices__claude-tts__speak — use whichever exists. The /voice command
-toggles voice in this chat; ordinary words never switch it.`
+`VOICE: Call speak FIRST in every reply, in every chat (before text):
+mcp__claude-tts__speak, or mcp__remote-devices__claude-tts__speak in cloud chats.
+Speak text = chat text verbatim, minus markdown/code/paths/URLs, including
+ready-to-send texts in blocks. No paraphrasing/summarizing — exact match required.
+The /voice command toggles voice in this chat.`
 
-**Cloud (remote) Cowork sessions.** A Cowork chat can run on Anthropic's servers
-with the computer attached as a device instead of running locally. Such chats
-write no local `audit.jsonl`, so `tts-watch` cannot see them; they are voiced
-only when Claude itself calls `speak` (the local claude-tts server is bridged to
-them). That is why the skill tells Claude to call `speak` in every chat.
+Keep this line short and unconditional. **Never** add a rule like "in Cowork don't
+speak the final answer, it is read from the screen": cloud chats also look like
+Cowork to Claude, and with that rule they go silent (this happened on 27.09.2026 —
+voice in cloud chats stopped the same hour).
+
+**Cloud chats.** Regular chats in the desktop app and new Cowork chats may run on
+Anthropic's servers with the computer attached as a device. They write no local
+`audit.jsonl`, so `tts-watch` cannot see them; they are voiced only when Claude
+itself calls `speak` (the local claude-tts server is bridged to them; the tool is
+deferred there, so Claude first finds it with ToolSearch). A chat that already has
+many silent replies tends to stay silent even with correct rules — one message in
+that chat, "озвучивай каждый ответ через speak", fixes it; new chats voice at once.
+
+**No double voice in local chats.** In a local Cowork chat both Claude's `speak`
+and `tts-watch` could voice the same answer. `tts-watch` sees Claude's speak call
+in the chat log 2–5 s before it reaches the server and registers it via
+`POST /suppress`; the server holds every non-watcher speak 1.5 s and drops the
+registered ones (`S` in `speak.log`). The answer is then read once, verbatim, from
+the screen, together with Russian progress lines written between tool calls.
 
 Also make sure the `voice` skill (the `/voice` toggle) is switched ON, and tell
 the user about `/voice` (this chat, a toggle) and `Ctrl+Alt+A` (everywhere).

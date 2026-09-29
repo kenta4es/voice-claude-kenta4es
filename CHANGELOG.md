@@ -2,6 +2,43 @@
 
 All notable changes to this project.
 
+## [1.2.9] — 2026-09-29
+
+One voice per answer; cloud chats speak again; dictation writes digits and dictated punctuation.
+
+### Fixed
+
+- **Cloud chats went silent.** Root cause, found in the chat history: the rule
+  "in Cowork don't speak the final answer, it is read from the screen" (skill
+  and the recommended VOICE line). Cloud chats also look like Cowork to Claude,
+  so they stopped calling `speak` the same hour. The `voice-output` skill is back
+  to the strict wording that worked ("speak FIRST in every reply, in every chat,
+  skipping is a bug") plus the cloud tool name; the VOICE line in CLAUDE.md is
+  short and unconditional again. A chat that already has many silent replies may
+  stay silent — one message "озвучивай каждый ответ через speak" fixes it.
+  Verified: new chats and previously silent chats are voiced.
+- **Answers were voiced twice in local chats** (Claude's shortened `speak`, then
+  the watcher reading the screen). Now there is exactly one voice: the watcher
+  sees Claude's speak call in the chat log 2–5 s before it reaches the server and
+  registers it via `POST /suppress`; the server holds every non-watcher speak
+  1.5 s and drops registered ones (`S` in `speak.log`). The screen text is read
+  once, verbatim. Cloud chats are unaffected (nothing registers them). Verified
+  live: Claude's speech dropped, answer read once.
+- **Progress lines in local chats were silent.** The watcher now voices Russian
+  text written between tool calls as soon as the next tool starts; lines of the
+  same answer continue one message (no «Следующее сообщение» between them).
+  English lines are still skipped.
+
+### Changed
+
+- **OpenWhispr cleanup prompt** (`docs/openwhispr-cleanup-prompt.txt`): numbers
+  as digits (also inflected forms and ranges: «в двух-трёх» → «в 2–3»,
+  «три двоеточие пятнадцать» → «3:15»); dictated punctuation («двоеточие»,
+  «знак вопроса», «запятая», «тире», «новая строка» …) becomes the mark itself,
+  but not when you talk *about* a mark («здесь нужна запятая»). Install:
+  Prompt Studio → Customize → paste → Save (writing localStorage directly does
+  not persist). Verified in Prompt Studio → Test and by live dictation.
+
 ## [1.2.8] — 2026-09-27
 
 Voice works in cloud Cowork chats; auto-voicing never drops a block or reads twice.
