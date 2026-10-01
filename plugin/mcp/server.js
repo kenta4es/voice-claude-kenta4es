@@ -282,6 +282,11 @@ function readableFences(t) {
 function sanitizeForSpeech(input) {
   let t = String(input);
   t = readableFences(t);                                         // code blocks out, prose blocks kept
+  // Emoji are decoration, not words: the Windows voice reads them by name
+  // («земной шар», «зелёная галочка»). Remove pictographs, flags, skin tones,
+  // keycap marks, variation selectors and joiners.
+  t = t.replace(/\p{Extended_Pictographic}/gu, ' ');
+  t = t.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}\uFE0E\uFE0F\u200D\u20E3]/gu, '');
   t = t.replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ');      // "Used X integration"
   t = t.replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ');
   t = t.replace(/[·•][^\n]*\b(?:actions?|notes?)\b/gi, ' ');

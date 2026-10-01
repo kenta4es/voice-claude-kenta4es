@@ -2,6 +2,20 @@
 
 All notable changes to this project.
 
+## [1.2.10] — 2026-10-01
+
+Emoji are no longer read aloud.
+
+### Fixed
+
+- **The Windows voice read emoji by name** («земной шар», «зелёная галочка»).
+  `sanitizeForSpeech` in the server now removes pictographs, flags, skin tones,
+  keycap marks, variation selectors and joiners before speaking. It is applied
+  centrally, so Claude's replies, the auto-voicing watcher and `Ctrl+Alt+Z` are
+  all covered. Prices, percents, quotes and dashes are kept. Verified: offline
+  cases («🌍 Оплата по всему миру» → «Оплата по всему миру», «Шаг 1️⃣ сделан ✔️» →
+  «Шаг 1 сделан») and live — `speak.log` shows the phrase without emoji.
+
 ## [1.2.9] — 2026-09-29
 
 One voice per answer; cloud chats speak again; dictation writes digits and dictated punctuation.
