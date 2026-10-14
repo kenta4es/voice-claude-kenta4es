@@ -43,10 +43,14 @@ Copy-Item "$pluginRoot\mcp\server.js" "$installDir\server.js" -Force
 Copy-Item "$pluginRoot\mcp\tts-engine.ps1" "$installDir\tts-engine.ps1" -Force
 Copy-Item "$pluginRoot\mcp\start-tts-hidden.vbs" "$installDir\start-tts-hidden.vbs" -Force
 Copy-Item "$pluginRoot\mcp\package.json" "$installDir\package.json" -Force
+# Auto-voicing watcher, audio-level helper for the watchdog, Edge voice page (Svetlana/Dmitry)
+foreach ($f in 'tts-watch.cjs', 'meter-helper.ps1', 'edge-voice.html', 'speak-file.ps1', 'tts-restart.ps1') {
+    if (Test-Path "$pluginRoot\mcp\$f") { Copy-Item "$pluginRoot\mcp\$f" "$installDir\$f" -Force }
+}
 
-# Update VBS to point to actual install path
+# Update VBS to point to actual install path (server.js and tts-watch.cjs)
 $vbsContent = Get-Content "$installDir\start-tts-hidden.vbs" -Raw
-$vbsContent = $vbsContent -replace 'C:\\ClaudeTTS\\server\.js', ($installDir.Replace('\','\\') + '\\server.js')
+$vbsContent = $vbsContent -replace 'C:\\ClaudeTTS\\', ($installDir.Replace('\','\\') + '\\')
 Set-Content "$installDir\start-tts-hidden.vbs" $vbsContent -Encoding ASCII
 
 # ---------- 3. Install npm deps ----------

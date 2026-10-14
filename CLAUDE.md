@@ -78,6 +78,17 @@ foreach ($v in 'Microsoft Svetlana Online','Microsoft Irina Desktop') {
    Write the winner into `voice.txt` (just the distinctive part, e.g.
    `Svetlana`). Every script reads that file.
 
+   **Since 10.10.2026 the WAV test above gives 46 bytes for Svetlana/Dmitry Online
+   everywhere** — Microsoft broke third-party access to these voices. That is
+   expected: for `Microsoft Svetlana Online` and `Microsoft Dmitry Online` the server
+   does not use SAPI any more but a hidden Microsoft Edge window (`edge-voice.html`),
+   and Edge still speaks them. Requirements: Microsoft Edge installed (it is on every
+   Windows 10/11) and `edge-voice.html` + `meter-helper.ps1` next to `server.js`.
+   Check after start: `Invoke-WebRequest http://127.0.0.1:48329/edge-state` must show
+   `"useEdge":true,"alive":true,"voices":true`; then speak a test phrase and ask the
+   user whether it was heard. Do not close the "Claude voice (Edge)" window — the
+   server reopens it within ~15 s anyway.
+
 ---
 
 ## 3. Install the hotkeys

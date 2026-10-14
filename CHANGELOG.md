@@ -2,6 +2,45 @@
 
 All notable changes to this project.
 
+## [1.2.11] — 2026-10-14
+
+Svetlana and Dmitry speak again (through the Edge browser); a watchdog restarts a voice that hangs silently.
+
+### Fixed
+
+- **Svetlana and Dmitry went silent.** On 2026-10-10 Microsoft changed the protocol of
+  its free Edge read-aloud service: third-party clients (NaturalVoiceSAPIAdapter, which
+  provides "Microsoft Svetlana/Dmitry Online" to SAPI, and edge-tts) now get
+  "Invalid HTTP status" / 403 and produce silence ([rany2/edge-tts #490](https://github.com/rany2/edge-tts/issues/490)).
+  The adapter log shows the first failure on 11.10, more each day, 100 % on 14.10.
+  The Edge browser itself still speaks these voices, so for them the server now drives
+  a hidden Edge window: `edge-voice.html` (own profile `edge-voice-profile`, opened
+  off-screen) long-polls `/edge/next` and speaks with speechSynthesis using
+  «Microsoft Светлана/Дмитрий Online (Natural)». Queue with «Следующее сообщение», stop,
+  pause/resume, volume and rate work as before. The window is started and restarted by
+  the server; `GET /edge-state` shows its status. Irina and Pavel still use SAPI.
+  The two voices are offered even without NaturalVoiceSAPIAdapter as long as Edge is
+  installed. Verified: both voices audible, signal on the speakers measured.
+
+### Added
+
+- **Watchdog for silent hangs.** `meter-helper.ps1` reports the output level of every
+  audio session (pid, peak, process) every 300 ms. If the engine says it is speaking but
+  its own sound does not appear within 15 s, or stops for more than 8 s, the engine (or
+  the Edge window) is restarted and everything not yet spoken is replayed. A second hang
+  within 5 minutes replays with Svetlana if another voice was hanging; more than 3
+  restarts in 5 minutes — it gives up instead of looping. Ignored while muted or paused.
+  Logged as `W` lines in `speak.log`.
+- **Character counter** — `GET /usage`, `usage.json`: characters spoken this month.
+  Spoken warnings are off (`USAGE_NOTIFY=false`); they are only useful with a metered
+  voice such as Azure (free tier 500 000 characters/month).
+
+### Changed
+
+- `install.ps1` now also copies `tts-watch.cjs`, `meter-helper.ps1`, `edge-voice.html`,
+  `speak-file.ps1`, `tts-restart.ps1`, and points both lines of the launcher at the
+  install folder.
+
 ## [1.2.10] — 2026-10-01
 
 Emoji are no longer read aloud.

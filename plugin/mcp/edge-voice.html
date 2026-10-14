@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Claude voice (Edge)</title></head>
+<body style="font:12px sans-serif;background:#222;color:#aaa">
+<div id="st">starting</div>
+<script>
+// Browser speech engine for the Claude TTS server.
+// Microsoft broke third-party access to its free online voices on 10.10.2026, but
+// the Edge browser itself still speaks them. The server opens this page in a hidden
+// Edge window; the page long-polls /edge/next for jobs and speaks them with
+// speechSynthesis using "Microsoft Светлана/Дмитрий Online (Natural)".
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let pending = 0, paused = false, voicesReady = false;
+const st = (s) => { document.getElementById('st').textContent = s; };
+
+function voices() { return speechSynthesis.getVoices(); }
+function pickVoice(key) {
+  const re = key === 'dmitry' ? /Dmitry|Дмитрий/i : /Svetlana|Светлана/i;
+  const vs = voices();
+  return vs.find((v) => re.test(v.name) && !v.localService) || vs.find((v) => re.test(v.name)) || null;
+}
+// Split long text into sentence chunks (safer for long replies).
+function chunks(text) {
+  const parts = String(text).replace(/\s+/g, ' ').trim().match(/[^.!?…]+[.!?…]*\s*/g) || [String(text)];
+  const out = []; let cur = '';
+  for (const p of parts) {
+    if ((cur + p).length > 280 && cur) { out.push(cur.trim()); cur = ''; }
+    cur += p;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function utter(text, job) {
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(job.voice);
+  if (v) u.voice = v;
+  u.lang = 'ru-RU';
+  u.rate = job.rate || 1;
+  u.volume = job.volume == null ? 1 : job.volume;
+  pending++;
+  const done = () => { pending = Math.max(0, pending - 1); };
+  u.onend = done; u.onerror = done;
+  speechSynthesis.speak(u);
+}
+function handle(job) {
+  if (job.type === 'speak') {
+    if (!job.queue && (speechSynthesis.speaking || pending > 0)) utter('Следующее сообщение.', job);
+    for (const c of chunks(job.text)) utter(c, job);
+  } else if (job.type === 'stop') {
+    speechSynthesis.cancel(); pending = 0; paused = false;
+  } else if (job.type === 'pause') {
+    speechSynthesis.pause(); paused = true;
+  } else if (job.type === 'resume') {
+    speechSynthesis.resume(); paused = false;
+  } else if (job.type === 'reload') {
+    location.reload();
+  }
+}
+async function loop() {
+  for (;;) {
+    try {
+      const q = `speaking=${speechSynthesis.speaking ? 1 : 0}&pending=${pending}&paused=${paused ? 1 : 0}&voices=${voicesReady ? 1 : 0}`;
+      const r = await fetch('/edge/next?' + q, { cache: 'no-store' });
+      const j = await r.json();
+      for (const job of j.jobs || []) handle(job);
+      st(`ok ${new Date().toLocaleTimeString()} pending=${pending} speaking=${speechSynthesis.speaking}`);
+    } catch (e) {
+      st('server not reachable: ' + e.message);
+      await sleep(1000);
+    }
+  }
+}
+function waitVoices() {
+  const t = setInterval(() => {
+    if (voices().some((v) => /Светлана|Svetlana/i.test(v.name) && !v.localService)) { voicesReady = true; clearInterval(t); }
+  }, 300);
+}
+waitVoices();
+loop();
+</script>
+</body></html>

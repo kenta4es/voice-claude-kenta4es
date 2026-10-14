@@ -85,6 +85,8 @@ process.on('unhandledRejection', (e) => {
 
 // ---------- long-lived PowerShell engine ----------
 const enginePath = join(PSDIR, 'tts-engine.ps1');
+let voiceOverride = null;        // set by the watchdog: voice for the replay after a hang
+let onEngineRestored = null;     // called once the respawned engine has its voice applied
 let engine = null;
 let engineReady = false;
 const pendingReplies = []; // queue of resolvers waiting for engine output
@@ -134,7 +136,9 @@ function startEngine() {
       if (await waitReady(8000)) {
         await sendCmd(`VOLUME ${state.volume}`);
         await sendCmd(`RATE ${state.rate}`);
-        await sendCmd(`VOICE ${state.voice}`);
+        // The watchdog may ask for a different voice for the replay (see watchdogTick).
+        await sendCmd(`VOICE ${voiceOverride || state.voice}`);
+        if (onEngineRestored) { const f = onEngineRestored; onEngineRestored = null; f(); }
       }
     }, 1000);
   });
@@ -185,6 +189,8 @@ function restartEngine(reason) {
 // Stop that cannot fail. If the engine does not confirm quickly it is wedged,
 // so we kill it — the user pressed Stop and must get silence either way.
 async function stopSpeech() {
+  // Edge voices: silence the browser engine too (cheap, harmless when unused).
+  if (typeof edgePush === 'function') { edgeJobs.length = 0; edgePush({ type: 'stop' }); inflight.length = 0; }
   const r = await sendCmd('STOP', 1500);
   if (r === 'TIMEOUT' || r === 'ENGINE_NOT_READY' || r === 'WRITE_ERR') {
     restartEngine('stop did not respond (' + r + ')');
@@ -362,8 +368,235 @@ function speakAsync(text, queue = false) {
   logSpeak(text, payload, queue);
   if (!payload) return Promise.resolve('EMPTY');
   if (state.removePunctuationPauses) payload = payload.replace(/\s+/g, ' ');
+  inflight.push({ queue, payload });                 // remembered until the engine goes quiet
+  countUsage(payload.length);
+  if (useEdge()) return edgeSpeak(payload, queue);
   const b64 = Buffer.from(payload, 'utf8').toString('base64');
   return sendCmd(`${queue ? 'SPEAKQ' : 'SPEAK'} ${b64}`);
+}
+
+// ---------- monthly character counter (Azure free tier: 500 000 chars / month) ----------
+// Counts every character actually sent to the speech engine in the current calendar
+// month (usage.json next to the server). At USAGE_WARN and USAGE_LIMIT it says so out
+// loud once, so the user can decide in time whether to switch to the paid tier.
+// GET /usage shows the numbers.
+const USAGE_FILE = join(PSDIR, 'usage.json');
+const USAGE_WARN = 450000, USAGE_LIMIT = 500000;
+// Spoken warnings only matter on a metered voice (Azure). With the free Edge voices
+// the counter just counts; set to true if a paid/limited voice is used again.
+const USAGE_NOTIFY = false;
+let usage = { month: '', chars: 0, warned: false, limitSaid: false };
+try { usage = Object.assign(usage, JSON.parse(readFileSync(USAGE_FILE, 'utf8'))); } catch {}
+function monthKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function countUsage(n) {
+  const m = monthKey();
+  if (usage.month !== m) usage = { month: m, chars: 0, warned: false, limitSaid: false };
+  usage.chars += n;
+  let notice = '';
+  if (!USAGE_NOTIFY) { try { writeFileSync(USAGE_FILE, JSON.stringify(usage, null, 2)); } catch {} return; }
+  if (!usage.warned && usage.chars >= USAGE_WARN) {
+    usage.warned = true;
+    notice = `Внимание: в этом месяце озвучено уже ${Math.round(usage.chars / 1000)} тысяч символов из 500 бесплатных. Скоро бесплатный лимит закончится.`;
+  } else if (!usage.limitSaid && usage.chars >= USAGE_LIMIT) {
+    usage.limitSaid = true;
+    notice = 'Бесплатный лимит озвучки на этот месяц исчерпан. Озвучка может замолчать до первого числа.';
+  }
+  try { writeFileSync(USAGE_FILE, JSON.stringify(usage, null, 2)); } catch {}
+  if (notice) {
+    try { appendFileSync(SPEAK_LOG, `${new Date().toISOString()} U ${notice}\n`); } catch {}
+    setTimeout(() => { sendCmd(`SPEAKQ ${Buffer.from(notice, 'utf8').toString('base64')}`); }, 0);
+  }
+}
+
+// ---------- Edge browser engine for the online voices ----------
+// On 10.10.2026 Microsoft changed the protocol of its free Edge read-aloud service:
+// third-party clients (NaturalVoiceSAPIAdapter -> "Microsoft Svetlana/Dmitry Online"
+// in SAPI) get "Invalid HTTP status" and produce silence. The Edge browser itself
+// still speaks these voices. So for them the server drives a hidden Edge window
+// (edge-voice.html) that long-polls /edge/next for jobs and speaks with
+// speechSynthesis. Offline voices (Irina, Pavel) still use the SAPI engine.
+const EDGE_VOICES = { 'Microsoft Svetlana Online': 'svetlana', 'Microsoft Dmitry Online': 'dmitry' };
+const EDGE_PROFILE = join(PSDIR, 'edge-voice-profile');
+const EDGE_PAGE = join(PSDIR, 'edge-voice.html');
+const EDGE_EXE = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'].find((p) => existsSync(p));
+const edgeJobs = [];
+const edgeWaiters = [];
+const edgeStatus = { at: 0, speaking: false, pending: 0, paused: false, voices: false };
+let lastEdgeSignal = 0, edgeLaunchedAt = 0;
+
+function edgeKey() { return EDGE_VOICES[state.voice] || null; }
+function edgeAlive() { return Date.now() - edgeStatus.at < 4000; }
+function useEdge() { return !!(EDGE_EXE && edgeKey()); }
+function edgeBusy() { return edgeStatus.speaking || edgeStatus.pending > 0; }
+function edgeRate() { return Math.max(0.5, Math.min(2, 1 + (state.rate || 0) * 0.08)); }
+
+function edgePush(job) {
+  edgeJobs.push(job);
+  while (edgeWaiters.length) { const w = edgeWaiters.shift(); w(); }
+}
+function edgeSpeak(payload, queue) {
+  edgePush({ type: 'speak', text: payload, queue, voice: edgeKey(), rate: edgeRate(), volume: (state.volume || 0) / 100 });
+  return Promise.resolve('OK');
+}
+function edgeState() { return !edgeAlive() ? 'NOT_RUNNING' : edgeStatus.paused ? 'Paused' : edgeBusy() ? 'Speaking' : 'Ready'; }
+
+function killEdgeVoice() {
+  return new Promise((resolve) => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-Command',
+      "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { $_.CommandLine -like '*edge-voice-profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+      { windowsHide: true, stdio: 'ignore' });
+    p.on('exit', () => resolve()); p.on('error', () => resolve());
+  });
+}
+async function launchEdgeVoice(reason) {
+  if (!EDGE_EXE) return;
+  edgeLaunchedAt = Date.now();
+  wdLog('edge voice window start: ' + reason);
+  await killEdgeVoice();
+  const child = spawn(EDGE_EXE, [
+    `--user-data-dir=${EDGE_PROFILE}`, `--app=http://127.0.0.1:${HTTP_PORT}/edge-voice`,
+    '--autoplay-policy=no-user-gesture-required', '--no-first-run', '--no-default-browser-check',
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+    '--window-position=-2400,-2400', '--window-size=360,200',
+  ], { detached: true, stdio: 'ignore', windowsHide: true });
+  child.on('error', (e) => wdLog('edge start error: ' + e.message));
+  child.unref();
+}
+// Keep the Edge window alive while an Edge voice is selected.
+function edgeSupervise() {
+  if (!useEdge()) return;
+  if (!edgeAlive() && Date.now() - edgeLaunchedAt > 15000) launchEdgeVoice('no poll from the edge page');
+}
+
+// ---------- watchdog: "speaking" but no sound ----------
+// The Microsoft *Online* voices (Svetlana, Dmitry) are synthesized in the cloud.
+// Now and then the engine hangs: SAPI reports Speaking, nothing reaches the
+// speakers, and only a manual Ctrl+Alt+R helped. meter-helper.ps1 reports the
+// real output level of every audio session on the default device; if the engine
+// says Speaking but its own session produces no signal for SILENT_MS, the engine
+// is restarted and everything not yet spoken is said again. A second hang within
+// 5 minutes replays with FALLBACK_VOICE (Svetlana, the user's preferred voice) if
+// another voice was the one hanging; if Svetlana herself hangs, she is simply
+// restarted again. More than MAX_RESTARTS in 5 minutes: give up quietly (no loop).
+const SILENT_MS = 8000;               // silence after the voice has started speaking
+const FIRST_SOUND_MS = 15000;         // wait for the first sound of a message
+const FALLBACK_VOICE = 'Microsoft Svetlana Online';
+const MAX_RESTARTS = 3;
+const COLD_START_MS = 10000;          // after a restart the first sound may take longer
+let graceUntil = 0;
+const inflight = [];                  // messages sent since the engine was last quiet
+const lastSignal = new Map();         // pid -> time of last non-zero output peak
+let meter = null, lastMeterTick = 0, speakingSince = 0, wdBusy = false, fallbackActive = false;
+const autoRestarts = [];
+
+function startMeter() {
+  meter = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(PSDIR, 'meter-helper.ps1')],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  meter.on('error', () => {});
+  meter.stdout.on('error', () => {});
+  let buf = '';
+  meter.stdout.setEncoding('utf8');
+  meter.stdout.on('data', (c) => {
+    buf += c;
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('TICK')) continue;
+      lastMeterTick = Date.now();
+      for (const tok of line.split(' ').slice(1)) {
+        const [p, v, name] = tok.split(':');
+        if (parseFloat(v) > 0.01) {
+          lastSignal.set(Number(p), Date.now());
+          if (name === 'msedge') lastEdgeSignal = Date.now();
+        }
+      }
+    }
+  });
+  meter.on('exit', () => { meter = null; setTimeout(startMeter, 5000); });
+}
+
+function wdLog(msg) {
+  try { appendFileSync(SPEAK_LOG, `${new Date().toISOString()} W ${msg}\n`); } catch {}
+}
+
+async function watchdogTick() {
+  if (wdBusy) return;
+  wdBusy = true;
+  try {
+    const edge = useEdge();
+    if (edge) edgeSupervise();
+    if (!edge && (!engine || !engineReady)) { speakingSince = 0; return; }
+    const st = edge ? edgeState() : await sendCmd('STATE', 1500);
+    if (st === 'Ready') {
+      inflight.length = 0;
+      speakingSince = 0;
+      if (fallbackActive && !edge) { fallbackActive = false; await sendCmd(`VOICE ${state.voice}`); }
+      return;
+    }
+    // An engine that does not even answer STATE while it has work is wedged too
+    // (for Edge: the page stopped polling).
+    const now = Date.now();
+    if ((st === 'TIMEOUT' || st === 'NOT_RUNNING') && inflight.length && state.volume > 0) {
+      if (!speakingSince) speakingSince = now;
+    } else {
+      // Muted (Ctrl+Alt+A), paused, or no level data: silence is expected, don't judge.
+      if (st !== 'Speaking' || state.volume === 0 || now - lastMeterTick > 3000) { speakingSince = 0; return; }
+      if (!speakingSince) speakingSince = now;
+    }
+    // Cloud voices can take several seconds before the FIRST sound of a message (test:
+    // Dmitry Online started after ~6 s). Until the first sound: wait FIRST_SOUND_MS;
+    // once sound has started: a gap longer than SILENT_MS means a hang.
+    const sig = edge ? lastEdgeSignal : (lastSignal.get(engine.pid) || 0);
+    const started = sig >= speakingSince;
+    const limit = started ? SILENT_MS : FIRST_SOUND_MS;
+    const heard = Math.max(speakingSince, sig, graceUntil - limit);
+    if (now - heard < limit) return;
+
+    // Stuck: speaking with no sound.
+    speakingSince = 0;
+    const recent = autoRestarts.filter((t) => now - t < 5 * 60 * 1000);
+    recent.push(now);
+    autoRestarts.splice(0, autoRestarts.length, ...recent);
+    const useFallback = recent.length >= 2 && state.voice !== FALLBACK_VOICE;
+    const giveUp = recent.length > MAX_RESTARTS;
+    const replay = giveUp ? [] : inflight.splice(0);
+    if (giveUp) inflight.length = 0;
+    wdLog(`engine speaking but silent ${Math.round((now - heard) / 1000)}s -> restart, ` +
+      (giveUp ? `gave up after ${MAX_RESTARTS} restarts in 5 min, nothing replayed` :
+        `replay ${replay.length} msg${useFallback ? ', fallback voice ' + FALLBACK_VOICE : ''}`));
+    if (edge) {
+      // Browser engine: restart the hidden Edge window, replay once its page polls again.
+      edgeJobs.length = 0;
+      await launchEdgeVoice('watchdog: speaking but silent');
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (edgeAlive() && edgeStatus.at > t0) {
+          clearInterval(iv);
+          graceUntil = Date.now() + COLD_START_MS;
+          for (const m of replay) { inflight.push(m); countUsage(m.payload.length); edgeSpeak(m.payload, m.queue); }
+        } else if (Date.now() - t0 > 30000) { clearInterval(iv); wdLog('edge window did not come back'); }
+      }, 500);
+      return;
+    }
+    // The exit handler respawns the engine and applies volume/rate/voice; the replay
+    // starts only after that (no race between "VOICE <saved>" and the fallback voice).
+    voiceOverride = useFallback ? FALLBACK_VOICE : null;
+    if (useFallback) fallbackActive = true;
+    onEngineRestored = async () => {
+      voiceOverride = null;
+      graceUntil = Date.now() + COLD_START_MS;           // a freshly started cloud voice needs a moment
+      for (const m of replay) {
+        inflight.push(m);
+        countUsage(m.payload.length);
+        await sendCmd(`${m.queue ? 'SPEAKQ' : 'SPEAK'} ${Buffer.from(m.payload, 'utf8').toString('base64')}`);
+      }
+    };
+    restartEngine('watchdog: speaking but silent');
+  } finally {
+    wdBusy = false;
+  }
 }
 
 function listVoicesPS() {
@@ -383,9 +616,14 @@ function listVoicesPS() {
         const [name, culture, gender] = ln.split('|');
         return { name, culture, gender };
       });
+      // The Edge online voices exist even without NaturalVoiceSAPIAdapter: they are
+      // spoken by the Edge browser engine (see "Edge browser engine").
+      if (EDGE_EXE) for (const n of Object.keys(EDGE_VOICES)) {
+        if (!voices.some((v) => v.name === n)) voices.push({ name: n, culture: 'ru-RU', gender: n.includes('Dmitry') ? 'Male' : 'Female' });
+      }
       resolve(voices);
     });
-    proc.on('error', () => resolve([]));
+    proc.on('error', () => resolve(EDGE_EXE ? Object.keys(EDGE_VOICES).map((n) => ({ name: n, culture: 'ru-RU', gender: '' })) : []));
   });
 }
 
@@ -447,6 +685,23 @@ const httpServer = http.createServer(async (req, res) => {
     req.on('end', () => { res.end(registerSuppress(body)); });
     return;
   }
+  // Edge voice page and its job feed (see "Edge browser engine" above).
+  if (req.method === 'GET' && req.url.startsWith('/edge-voice')) {
+    try { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(readFileSync(EDGE_PAGE)); }
+    catch (e) { res.statusCode = 500; res.end('edge-voice.html missing'); }
+    return;
+  }
+  if (req.method === 'GET' && req.url.startsWith('/edge/next')) {
+    const q = new URL(req.url, 'http://127.0.0.1').searchParams;
+    Object.assign(edgeStatus, { at: Date.now(), speaking: q.get('speaking') === '1',
+      pending: Number(q.get('pending') || 0), paused: q.get('paused') === '1', voices: q.get('voices') === '1' });
+    res.setHeader('Content-Type', 'application/json');
+    const send = () => { if (res.writableEnded) return; res.end(JSON.stringify({ jobs: edgeJobs.splice(0) })); };
+    if (edgeJobs.length) return send();
+    const t = setTimeout(send, 800);
+    edgeWaiters.push(() => { clearTimeout(t); send(); });
+    return;
+  }
   // Parse pathname + query (req.url is path+query).
   const reqUrl = new URL(req.url, 'http://127.0.0.1');
   const pathname = reqUrl.pathname;
@@ -457,9 +712,10 @@ const httpServer = http.createServer(async (req, res) => {
     // Playback control must answer FAST or self-heal: these are driven by
     // hotkeys, and a hotkey that hangs is indistinguishable from a broken one.
     case '/stop':         result = await stopSpeech(); break;
-    case '/pause':        result = await sendCmd('PAUSE', 1500); break;
-    case '/resume':       result = await sendCmd('RESUME', 1500); break;
+    case '/pause':        if (useEdge()) { edgePush({ type: 'pause' }); result = 'PAUSED'; } else result = await sendCmd('PAUSE', 1500); break;
+    case '/resume':       if (useEdge()) { edgePush({ type: 'resume' }); result = 'RESUMED'; } else result = await sendCmd('RESUME', 1500); break;
     case '/toggle-pause': {
+      if (useEdge()) { const p = edgeStatus.paused; edgePush({ type: p ? 'resume' : 'pause' }); result = p ? 'RESUMED' : 'PAUSED'; break; }
       result = await sendCmd('TOGGLE', 1500);
       if (result === 'TIMEOUT' || result === 'ENGINE_NOT_READY') {
         restartEngine('toggle-pause did not respond');
@@ -469,7 +725,9 @@ const httpServer = http.createServer(async (req, res) => {
     }
     // Diagnostics must never hang either — a health check that blocks forever
     // is worse than one that honestly reports TIMEOUT.
-    case '/state':        result = await sendCmd('STATE', 1500); break;
+    case '/state':        result = useEdge() ? edgeState() : await sendCmd('STATE', 1500); break;
+    case '/edge-state':   result = JSON.stringify({ useEdge: useEdge(), alive: edgeAlive(), ...edgeStatus, lastSignalAgoMs: Date.now() - lastEdgeSignal }); break;
+    case '/usage':        result = JSON.stringify({ ...usage, warnAt: USAGE_WARN, limit: USAGE_LIMIT }); break;
     case '/ping':         result = await sendCmd('PING', 1500); break;
     case '/rate-up': {
       const r = await adjustRate(+1);
@@ -582,6 +840,8 @@ httpServer.on('listening', () => {
   startEngine();
   applyState();
   loadVoices();
+  startMeter();
+  setInterval(watchdogTick, 1000);
 });
 httpServer.listen(HTTP_PORT, '127.0.0.1');
 
@@ -647,9 +907,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return { content: [{ type: 'text', text: `Speaking (${text.length} chars)${queue ? ' [queued]' : ''}${isHttpOwner ? ` with ${state.voice} at rate ${state.rate}` : ' (forwarded to owner)'}` }] };
       }
       case 'stop':         { const r = isHttpOwner ? await stopSpeech()      : await forwardHttp('GET', '/stop');         return { content: [{ type: 'text', text: r || 'stopped' }] }; }
-      case 'pause':        { const r = isHttpOwner ? await sendCmd('PAUSE')  : await forwardHttp('GET', '/pause');        return { content: [{ type: 'text', text: r || 'paused' }] }; }
-      case 'resume':       { const r = isHttpOwner ? await sendCmd('RESUME') : await forwardHttp('GET', '/resume');       return { content: [{ type: 'text', text: r || 'resumed' }] }; }
-      case 'toggle_pause': { const r = isHttpOwner ? await sendCmd('TOGGLE') : await forwardHttp('GET', '/toggle-pause'); return { content: [{ type: 'text', text: r }] }; }
+      // Always via the HTTP handlers (also in the owner): they know about the Edge engine.
+      case 'pause':        { const r = await forwardHttp('GET', '/pause');        return { content: [{ type: 'text', text: r || 'paused' }] }; }
+      case 'resume':       { const r = await forwardHttp('GET', '/resume');       return { content: [{ type: 'text', text: r || 'resumed' }] }; }
+      case 'toggle_pause': { const r = await forwardHttp('GET', '/toggle-pause'); return { content: [{ type: 'text', text: r }] }; }
       case 'set_voice': {
         const requested = String(args.name || '').trim();
         if (!requested) throw new Error('name required');
