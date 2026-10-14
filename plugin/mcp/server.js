@@ -425,7 +425,15 @@ const edgeWaiters = [];
 const edgeStatus = { at: 0, speaking: false, pending: 0, paused: false, voices: false };
 let lastEdgeSignal = 0, edgeLaunchedAt = 0;
 
-function edgeKey() { return EDGE_VOICES[state.voice] || null; }
+// After Dmitry hangs silently, Svetlana speaks instead for EDGE_FALLBACK_MS, then
+// Dmitry is tried again (the user's wish: Dmitry by default, Svetlana as backup).
+const EDGE_FALLBACK_MS = 10 * 60 * 1000;
+let edgeFallbackUntil = 0;
+function edgeKey() {
+  const k = EDGE_VOICES[state.voice] || null;
+  if (k && k !== 'svetlana' && Date.now() < edgeFallbackUntil) return 'svetlana';
+  return k;
+}
 function edgeAlive() { return Date.now() - edgeStatus.at < 4000; }
 function useEdge() { return !!(EDGE_EXE && edgeKey()); }
 function edgeBusy() { return edgeStatus.speaking || edgeStatus.pending > 0; }
@@ -481,6 +489,7 @@ function edgeSupervise() {
 // restarted again. More than MAX_RESTARTS in 5 minutes: give up quietly (no loop).
 const SILENT_MS = 8000;               // silence after the voice has started speaking
 const FIRST_SOUND_MS = 15000;         // wait for the first sound of a message
+const EDGE_FIRST_SOUND_MS = 8000;     // the same for the Edge browser engine
 const FALLBACK_VOICE = 'Microsoft Svetlana Online';
 const MAX_RESTARTS = 3;
 const COLD_START_MS = 10000;          // after a restart the first sound may take longer
@@ -550,7 +559,8 @@ async function watchdogTick() {
     // once sound has started: a gap longer than SILENT_MS means a hang.
     const sig = edge ? lastEdgeSignal : (lastSignal.get(engine.pid) || 0);
     const started = sig >= speakingSince;
-    const limit = started ? SILENT_MS : FIRST_SOUND_MS;
+    // Edge starts speaking within a second or two, so it gets a shorter first-sound limit.
+    const limit = started ? SILENT_MS : (edge ? EDGE_FIRST_SOUND_MS : FIRST_SOUND_MS);
     const heard = Math.max(speakingSince, sig, graceUntil - limit);
     if (now - heard < limit) return;
 
@@ -568,6 +578,11 @@ async function watchdogTick() {
         `replay ${replay.length} msg${useFallback ? ', fallback voice ' + FALLBACK_VOICE : ''}`));
     if (edge) {
       // Browser engine: restart the hidden Edge window, replay once its page polls again.
+      // A silent Dmitry: switch to Svetlana right away (for EDGE_FALLBACK_MS).
+      if (EDGE_VOICES[state.voice] !== 'svetlana' && !giveUp) {
+        edgeFallbackUntil = Date.now() + EDGE_FALLBACK_MS;
+        wdLog(`fallback to Svetlana for ${EDGE_FALLBACK_MS / 60000} min`);
+      }
       edgeJobs.length = 0;
       await launchEdgeVoice('watchdog: speaking but silent');
       const t0 = Date.now();
@@ -726,6 +741,8 @@ const httpServer = http.createServer(async (req, res) => {
     // Diagnostics must never hang either — a health check that blocks forever
     // is worse than one that honestly reports TIMEOUT.
     case '/state':        result = useEdge() ? edgeState() : await sendCmd('STATE', 1500); break;
+    // Test hook: /edge-debug?silentDmitry=1 makes Dmitry speak at volume 0 (watchdog test).
+    case '/edge-debug':   edgePush({ type: 'debug', silentDmitry: qp.get('silentDmitry') === '1' }); result = 'OK'; break;
     case '/edge-state':   result = JSON.stringify({ useEdge: useEdge(), alive: edgeAlive(), ...edgeStatus, lastSignalAgoMs: Date.now() - lastEdgeSignal }); break;
     case '/usage':        result = JSON.stringify({ ...usage, warnAt: USAGE_WARN, limit: USAGE_LIMIT }); break;
     case '/ping':         result = await sendCmd('PING', 1500); break;

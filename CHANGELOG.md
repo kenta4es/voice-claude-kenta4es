@@ -2,6 +2,25 @@
 
 All notable changes to this project.
 
+## [1.2.12] — 2026-10-14
+
+Dmitry by default, Svetlana takes over when he goes silent.
+
+### Added
+
+- **Automatic fallback Dmitry → Svetlana.** In the Edge engine, if Dmitry is "speaking"
+  but no sound reaches the speakers for 8 s, the watchdog restarts the Edge window,
+  repeats the phrase with Svetlana and keeps Svetlana for 10 minutes, then tries Dmitry
+  again. Verified with the test hook `GET /edge-debug?silentDmitry=1` (simulates a hung
+  Dmitry): restart after 8 s, the phrase was spoken by Svetlana.
+- The first-sound limit for the Edge engine is 8 s (Edge starts within 1–2 s); SAPI
+  voices keep 15 s.
+
+### Changed
+
+- To use Dmitry by default: put `Dmitry` into `voice.txt` (Ctrl+Alt+R reads it) and
+  select him once (`/voice-set?name=Dmitry` or "переключи на Дмитрия").
+
 ## [1.2.11] — 2026-10-14
 
 Svetlana and Dmitry speak again (through the Edge browser); a watchdog restarts a voice that hangs silently.

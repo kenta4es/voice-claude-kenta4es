@@ -36,6 +36,8 @@ function utter(text, job) {
   u.lang = 'ru-RU';
   u.rate = job.rate || 1;
   u.volume = job.volume == null ? 1 : job.volume;
+  // Test of the watchdog fallback: simulate a hung Dmitry (counts as speaking, no sound).
+  if (window.__silentDmitry && job.voice === 'dmitry') { pending++; return; }
   pending++;
   const done = () => { pending = Math.max(0, pending - 1); };
   u.onend = done; u.onerror = done;
@@ -51,6 +53,8 @@ function handle(job) {
     speechSynthesis.pause(); paused = true;
   } else if (job.type === 'resume') {
     speechSynthesis.resume(); paused = false;
+  } else if (job.type === 'debug') {
+    window.__silentDmitry = !!job.silentDmitry;
   } else if (job.type === 'reload') {
     location.reload();
   }
