@@ -466,15 +466,20 @@ async function launchEdgeVoice(reason) {
     `--user-data-dir=${EDGE_PROFILE}`, `--app=http://127.0.0.1:${HTTP_PORT}/edge-voice`,
     '--autoplay-policy=no-user-gesture-required', '--no-first-run', '--no-default-browser-check',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+    '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
     '--window-position=-2400,-2400', '--window-size=360,200',
   ], { detached: true, stdio: 'ignore', windowsHide: true });
   child.on('error', (e) => wdLog('edge start error: ' + e.message));
   child.unref();
 }
 // Keep the Edge window alive while an Edge voice is selected.
+// Never restart while the window is audibly speaking: a late poll is not worth cutting
+// a sentence in half (that is what the user heard as "Dmitry breaks off mid-phrase").
 function edgeSupervise() {
   if (!useEdge()) return;
-  if (!edgeAlive() && Date.now() - edgeLaunchedAt > 15000) launchEdgeVoice('no poll from the edge page');
+  const now = Date.now();
+  if (!edgeAlive() && now - edgeLaunchedAt > 15000 && now - edgeStatus.at > 15000 && now - lastEdgeSignal > 10000)
+    launchEdgeVoice('no poll from the edge page');
 }
 
 // ---------- watchdog: "speaking" but no sound ----------
@@ -708,6 +713,8 @@ const httpServer = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && req.url.startsWith('/edge/next')) {
     const q = new URL(req.url, 'http://127.0.0.1').searchParams;
+    const gap = edgeStatus.at ? Date.now() - edgeStatus.at : 0;
+    if (gap > 6000) wdLog(`edge poll gap ${Math.round(gap / 1000)}s (speaking=${edgeStatus.speaking}, pending=${edgeStatus.pending})`);
     Object.assign(edgeStatus, { at: Date.now(), speaking: q.get('speaking') === '1',
       pending: Number(q.get('pending') || 0), paused: q.get('paused') === '1', voices: q.get('voices') === '1' });
     res.setHeader('Content-Type', 'application/json');

@@ -63,13 +63,18 @@ async function loop() {
   for (;;) {
     try {
       const q = `speaking=${speechSynthesis.speaking ? 1 : 0}&pending=${pending}&paused=${paused ? 1 : 0}&voices=${voicesReady ? 1 : 0}`;
-      const r = await fetch('/edge/next?' + q, { cache: 'no-store' });
+      // A request that hangs must not stall the loop (the server then thinks the page
+      // is dead and restarts the window, cutting speech mid-sentence).
+      const ac = new AbortController();
+      const to = setTimeout(() => ac.abort(), 5000);
+      const r = await fetch('/edge/next?' + q, { cache: 'no-store', signal: ac.signal });
       const j = await r.json();
+      clearTimeout(to);
       for (const job of j.jobs || []) handle(job);
       st(`ok ${new Date().toLocaleTimeString()} pending=${pending} speaking=${speechSynthesis.speaking}`);
     } catch (e) {
       st('server not reachable: ' + e.message);
-      await sleep(1000);
+      await sleep(500);
     }
   }
 }

@@ -2,6 +2,24 @@
 
 All notable changes to this project.
 
+## [1.2.13] — 2026-10-17
+
+Speech no longer breaks off mid-sentence.
+
+### Fixed
+
+- **Speech was cut in the middle of a phrase.** The server itself did it: when the Edge
+  voice page missed its poll for ~15 s, the server restarted the Edge window — even while
+  it was speaking (dozens of "no poll from the edge page" in the log on 15–16.10). Now:
+  - the window is never restarted while sound is coming from Edge;
+  - the page aborts a poll request after 5 s instead of hanging on it;
+  - Edge starts with `--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling`,
+    so a window that is not visible on screen is not throttled;
+  - poll gaps longer than 6 s are logged (`edge poll gap` in `speak.log`).
+
+**Update:** copy `server.js` and `edge-voice.html` from `plugin/mcp/` into the install
+folder, then restart the server.
+
 ## [1.2.12] — 2026-10-14
 
 Dmitry by default, Svetlana takes over when he goes silent.
