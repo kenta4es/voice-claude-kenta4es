@@ -285,7 +285,9 @@ function readableFences(t) {
   return String(t).replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => (isProseBlock(body) ? '\n' + body.trim() + '\n' : ' '));
 }
 
-function sanitizeForSpeech(input) {
+// soft=true: the same cleaning with the risky patterns narrowed (paths without spaces,
+// short "(N actions)" / "Used ..." pieces only). Used by the loss check in speakAsync.
+function sanitizeForSpeech(input, soft = false) {
   let t = String(input);
   t = readableFences(t);                                         // code blocks out, prose blocks kept
   // Emoji are decoration, not words: the Windows voice reads them by name
@@ -293,9 +295,15 @@ function sanitizeForSpeech(input) {
   // keycap marks, variation selectors and joiners.
   t = t.replace(/\p{Extended_Pictographic}/gu, ' ');
   t = t.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}\uFE0E\uFE0F\u200D\u20E3]/gu, '');
-  t = t.replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ');      // "Used X integration"
-  t = t.replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ');
-  t = t.replace(/[·•][^\n]*\b(?:actions?|notes?)\b/gi, ' ');
+  if (!soft) {
+    t = t.replace(/^[ \t]*(?:used|using)\b[^\n]*$/gim, ' ');      // "Used X integration"
+    t = t.replace(/\([^)]*\b(?:actions?|notes?|steps?)\b[^)]*\)/gi, ' ');
+    t = t.replace(/[·•][^\n]*\b(?:actions?|notes?)\b/gi, ' ');
+  } else {
+    t = t.replace(/^[ \t]*(?:used|using)\b[^\n]{0,60}$/gim, ' ');
+    t = t.replace(/\([^)\n]{0,30}\b(?:actions?|notes?|steps?)\b[^)\n]{0,30}\)/gi, ' ');
+    t = t.replace(/[·•][^\n]{0,30}\b(?:actions?|notes?)\b/gi, ' ');
+  }
   t = t.replace(/\b(?:mcp__|tool_use|tool_result)\S*/g, ' ');   // tool names
   // Source / reference lists at the end of a reply
   t = t.replace(/\n[ \t]{0,3}#{0,6}[ \t]*(?:\*\*|__)?(?:источник[аиов]*|sources?|references?)(?:\*\*|__)?[ \t]*:?[ \t]*\n[\s\S]*$/i, '\n');
@@ -306,7 +314,12 @@ function sanitizeForSpeech(input) {
   t = t.replace(/\bwww\.\S+/gi, ' ');
   t = t.replace(/\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|ru|org|net|io|ai|dev|me|app|co|edu|gov|info|xyz)\b(?:\/\S*)?/gi, ' ');
   t = t.replace(/^[ \t]*\|.*\|[ \t]*$/gm, ' ');                 // markdown tables: not read aloud
-  t = t.replace(/[A-Za-z]:[\\/][^\n\])"]*/g, ' ');              // windows paths, spaces included
+  // Windows paths. Spaces are allowed only inside folders that are followed by
+  // another slash; the last part stops at the first space. The old pattern ran
+  // to the end of the line and swallowed the rest of the sentence (17.10.2026:
+  // «Хранить в папке D:\...» lost 219 of 256 characters).
+  t = soft ? t.replace(/[A-Za-z]:[\\/][^\s"'`«»()\[\]<>|,;]*/g, ' ')
+    : t.replace(/[A-Za-z]:[\\/](?:[^\\/\n"'`«»()\[\]<>|]{0,60}[\\/])*[^\s\\/"'`«»()\[\]<>|,;:]*/g, ' ');
   t = t.replace(/`([^`]+)`/g, '$1');                            // inline code marks
   t = t.replace(/(\*\*|__)(.*?)\1/g, '$2');
   t = t.replace(/^\s{0,3}#{1,6}\s+/gm, '');
@@ -363,9 +376,27 @@ function speakFromModel(text, queue = false) {
   }, HOLD_MS);
 }
 
+// ---- Loss check -------------------------------------------------------------
+// The cleaning removes paths, links, tool noise. If a pattern overreaches it eats
+// real words (17.10.2026: a path pattern swallowed the rest of a sentence). Every
+// message is cleaned twice, normally and with the narrowed patterns; if the normal
+// result lost a noticeable number of Russian words, the soft result is spoken
+// instead (before any sound, so nothing is cut and nothing repeats). Logged as L.
+function cyrWords(s) { return (String(s).match(/[а-яё]{2,}/gi) || []).length; }
+function lossChecked(text) {
+  const payload = sanitizeForSpeech(text);
+  const soft = sanitizeForSpeech(text, true);
+  const lost = cyrWords(soft) - cyrWords(payload);
+  if (lost >= 3 && lost >= cyrWords(soft) * 0.05) {
+    wdLog(`loss check: cleaning would drop ${lost} of ${cyrWords(soft)} words -> soft cleaning used`);
+    return { payload: soft, lossy: true };
+  }
+  return { payload, lossy: false };
+}
+
 function speakAsync(text, queue = false) {
-  let payload = sanitizeForSpeech(text);
-  logSpeak(text, payload, queue);
+  let { payload, lossy } = lossChecked(text);
+  logSpeak(text, payload, queue, lossy ? (queue ? 'LQ' : 'L') : undefined);
   if (!payload) return Promise.resolve('EMPTY');
   if (state.removePunctuationPauses) payload = payload.replace(/\s+/g, ' ');
   inflight.push({ queue, payload });                 // remembered until the engine goes quiet
@@ -423,7 +454,7 @@ const EDGE_EXE = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge
 const edgeJobs = [];
 const edgeWaiters = [];
 const edgeStatus = { at: 0, speaking: false, pending: 0, paused: false, voices: false };
-let lastEdgeSignal = 0, edgeLaunchedAt = 0;
+let lastEdgeSignal = 0, edgeLaunchedAt = 0, edgeReloadChecked = false;
 
 // After Dmitry hangs silently, Svetlana speaks instead for EDGE_FALLBACK_MS, then
 // Dmitry is tried again (the user's wish: Dmitry by default, Svetlana as backup).
@@ -497,6 +528,8 @@ const FIRST_SOUND_MS = 15000;         // wait for the first sound of a message
 const EDGE_FIRST_SOUND_MS = 8000;     // the same for the Edge browser engine
 const FALLBACK_VOICE = 'Microsoft Svetlana Online';
 const MAX_RESTARTS = 3;
+// Spoken after every automatic restart, so the user hears that the voice works again.
+const RESTORED_PHRASE = 'Озвучка восстановлена.';
 const COLD_START_MS = 10000;          // after a restart the first sound may take longer
 let graceUntil = 0;
 const inflight = [];                  // messages sent since the engine was last quiet
@@ -595,7 +628,10 @@ async function watchdogTick() {
         if (edgeAlive() && edgeStatus.at > t0) {
           clearInterval(iv);
           graceUntil = Date.now() + COLD_START_MS;
-          for (const m of replay) { inflight.push(m); countUsage(m.payload.length); edgeSpeak(m.payload, m.queue); }
+          // Say out loud that the voice is back, then continue the interrupted messages.
+          edgeSpeak(RESTORED_PHRASE, false);
+          wdLog('said: ' + RESTORED_PHRASE);
+          replay.forEach((m, i) => { inflight.push(m); countUsage(m.payload.length); edgeSpeak(m.payload, i === 0 ? true : m.queue); });
         } else if (Date.now() - t0 > 30000) { clearInterval(iv); wdLog('edge window did not come back'); }
       }, 500);
       return;
@@ -607,10 +643,14 @@ async function watchdogTick() {
     onEngineRestored = async () => {
       voiceOverride = null;
       graceUntil = Date.now() + COLD_START_MS;           // a freshly started cloud voice needs a moment
+      await sendCmd(`SPEAK ${Buffer.from(RESTORED_PHRASE, 'utf8').toString('base64')}`);
+      wdLog('said: ' + RESTORED_PHRASE);
+      let first = true;
       for (const m of replay) {
         inflight.push(m);
         countUsage(m.payload.length);
-        await sendCmd(`${m.queue ? 'SPEAKQ' : 'SPEAK'} ${Buffer.from(m.payload, 'utf8').toString('base64')}`);
+        await sendCmd(`${m.queue || first ? 'SPEAKQ' : 'SPEAK'} ${Buffer.from(m.payload, 'utf8').toString('base64')}`);
+        first = false;
       }
     };
     restartEngine('watchdog: speaking but silent');
@@ -711,8 +751,21 @@ const httpServer = http.createServer(async (req, res) => {
     catch (e) { res.statusCode = 500; res.end('edge-voice.html missing'); }
     return;
   }
+  // The Edge page reports a piece that broke off early and is being re-read (log only).
+  if (req.method === 'GET' && req.url.startsWith('/edge/report')) {
+    const q = new URL(req.url, 'http://127.0.0.1').searchParams;
+    wdLog(`edge cut: ${q.get('why')} after ${q.get('sec')}s, piece ${q.get('len')} chars -> re-reading last ${q.get('rest')} chars`);
+    res.end('OK');
+    return;
+  }
   if (req.method === 'GET' && req.url.startsWith('/edge/next')) {
     const q = new URL(req.url, 'http://127.0.0.1').searchParams;
+    // A page that was already open before this server started (Ctrl+Alt+R, update)
+    // still runs the OLD edge-voice.html: reload it once so it picks up the new one.
+    if (!edgeReloadChecked) {
+      edgeReloadChecked = true;
+      if (!edgeLaunchedAt) { edgeJobs.unshift({ type: 'reload' }); wdLog('edge page was open before the server start -> reload'); }
+    }
     const gap = edgeStatus.at ? Date.now() - edgeStatus.at : 0;
     if (gap > 6000) wdLog(`edge poll gap ${Math.round(gap / 1000)}s (speaking=${edgeStatus.speaking}, pending=${edgeStatus.pending})`);
     Object.assign(edgeStatus, { at: Date.now(), speaking: q.get('speaking') === '1',
@@ -749,7 +802,8 @@ const httpServer = http.createServer(async (req, res) => {
     // is worse than one that honestly reports TIMEOUT.
     case '/state':        result = useEdge() ? edgeState() : await sendCmd('STATE', 1500); break;
     // Test hook: /edge-debug?silentDmitry=1 makes Dmitry speak at volume 0 (watchdog test).
-    case '/edge-debug':   edgePush({ type: 'debug', silentDmitry: qp.get('silentDmitry') === '1' }); result = 'OK'; break;
+    // /edge-debug?cutNext=1 breaks off the next piece after 2 s (re-read test).
+    case '/edge-debug':   edgePush({ type: 'debug', silentDmitry: qp.get('silentDmitry') === '1', cutNext: qp.get('cutNext') === '1' }); result = 'OK'; break;
     case '/edge-state':   result = JSON.stringify({ useEdge: useEdge(), alive: edgeAlive(), ...edgeStatus, lastSignalAgoMs: Date.now() - lastEdgeSignal }); break;
     case '/usage':        result = JSON.stringify({ ...usage, warnAt: USAGE_WARN, limit: USAGE_LIMIT }); break;
     case '/ping':         result = await sendCmd('PING', 1500); break;

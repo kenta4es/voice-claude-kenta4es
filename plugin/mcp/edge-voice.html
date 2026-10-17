@@ -8,9 +8,16 @@
 // the Edge browser itself still speaks them. The server opens this page in a hidden
 // Edge window; the page long-polls /edge/next for jobs and speaks them with
 // speechSynthesis using "Microsoft Светлана/Дмитрий Online (Natural)".
+//
+// The page keeps its own queue and gives speechSynthesis one piece at a time, so a
+// piece that breaks off early (engine error, or "ended" far too fast for its length)
+// can be re-read from the last spoken word BEFORE the next piece starts. Each such
+// case is reported to the server (/edge/report -> "edge cut" in speak.log).
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let pending = 0, paused = false, voicesReady = false;
+const queue = [];                 // { text, job, retried }
+let cur = null, paused = false, voicesReady = false, cutNext = false;
 const st = (s) => { document.getElementById('st').textContent = s; };
+const pendingCount = () => queue.length + (cur ? 1 : 0);
 
 function voices() { return speechSynthesis.getVoices(); }
 function pickVoice(key) {
@@ -29,32 +36,64 @@ function chunks(text) {
   if (cur.trim()) out.push(cur.trim());
   return out;
 }
-function utter(text, job) {
-  const u = new SpeechSynthesisUtterance(text);
+function report(why, sec, len, rest) {
+  fetch(`/edge/report?why=${encodeURIComponent(why)}&sec=${sec}&len=${len}&rest=${rest}`, { cache: 'no-store' }).catch(() => {});
+}
+function next() {
+  if (cur || paused || !queue.length) return;
+  const item = queue.shift();
+  cur = item;
+  const job = item.job;
+  // Test of the watchdog fallback: simulate a hung Dmitry (counts as speaking, no sound).
+  if (window.__silentDmitry && job.voice === 'dmitry') return;
+  const u = new SpeechSynthesisUtterance(item.text);
   const v = pickVoice(job.voice);
   if (v) u.voice = v;
   u.lang = 'ru-RU';
   u.rate = job.rate || 1;
   u.volume = job.volume == null ? 1 : job.volume;
-  // Test of the watchdog fallback: simulate a hung Dmitry (counts as speaking, no sound).
-  if (window.__silentDmitry && job.voice === 'dmitry') { pending++; return; }
-  pending++;
-  const done = () => { pending = Math.max(0, pending - 1); };
-  u.onend = done; u.onerror = done;
+  let t0 = performance.now(), lastIdx = 0;
+  u.onstart = () => { t0 = performance.now(); };
+  u.onboundary = (e) => { if (e.charIndex > lastIdx) lastIdx = e.charIndex; };
+  const finish = (err) => {
+    if (cur !== item) return;          // stopped meanwhile
+    cur = null;
+    const sec = (performance.now() - t0) / 1000;
+    const len = item.text.length;
+    // Normal speech is ~15 chars/s; "ended" at more than 40 chars/s means it broke off.
+    const tooFast = !err && len >= 80 && sec < len / (40 * (job.rate || 1)) && lastIdx < len * 0.9;
+    const failed = err && err !== 'interrupted' && err !== 'canceled';
+    const rest = item.text.slice(lastIdx).trim();
+    if ((failed || tooFast || item.simCut) && !item.retried && rest.length > 3) {
+      report(item.simCut ? 'test' : failed ? 'error ' + err : 'ended too early', sec.toFixed(1), len, rest.length);
+      queue.unshift({ text: rest, job, retried: true });
+    }
+    setTimeout(next, 0);
+  };
+  u.onend = () => finish(null);
+  u.onerror = (e) => finish(e.error || 'error');
   speechSynthesis.speak(u);
+  if (cutNext) {
+    cutNext = false;
+    const arm = () => setTimeout(() => { if (cur === item) { item.simCut = true; speechSynthesis.cancel(); } }, 3000);
+    const os = u.onstart; u.onstart = (e) => { os(e); arm(); };
+  }
 }
+function enqueue(text, job) { queue.push({ text, job, retried: false }); }
 function handle(job) {
   if (job.type === 'speak') {
-    if (!job.queue && (speechSynthesis.speaking || pending > 0)) utter('Следующее сообщение.', job);
-    for (const c of chunks(job.text)) utter(c, job);
+    if (!job.queue && pendingCount() > 0) enqueue('Следующее сообщение.', job);
+    for (const c of chunks(job.text)) enqueue(c, job);
+    next();
   } else if (job.type === 'stop') {
-    speechSynthesis.cancel(); pending = 0; paused = false;
+    queue.length = 0; cur = null; paused = false; speechSynthesis.cancel();
   } else if (job.type === 'pause') {
     speechSynthesis.pause(); paused = true;
   } else if (job.type === 'resume') {
-    speechSynthesis.resume(); paused = false;
+    speechSynthesis.resume(); paused = false; next();
   } else if (job.type === 'debug') {
     window.__silentDmitry = !!job.silentDmitry;
+    if (job.cutNext) cutNext = true;
   } else if (job.type === 'reload') {
     location.reload();
   }
@@ -62,7 +101,8 @@ function handle(job) {
 async function loop() {
   for (;;) {
     try {
-      const q = `speaking=${speechSynthesis.speaking ? 1 : 0}&pending=${pending}&paused=${paused ? 1 : 0}&voices=${voicesReady ? 1 : 0}`;
+      const busy = speechSynthesis.speaking || !!cur;
+      const q = `speaking=${busy ? 1 : 0}&pending=${pendingCount()}&paused=${paused ? 1 : 0}&voices=${voicesReady ? 1 : 0}`;
       // A request that hangs must not stall the loop (the server then thinks the page
       // is dead and restarts the window, cutting speech mid-sentence).
       const ac = new AbortController();
@@ -71,7 +111,7 @@ async function loop() {
       const j = await r.json();
       clearTimeout(to);
       for (const job of j.jobs || []) handle(job);
-      st(`ok ${new Date().toLocaleTimeString()} pending=${pending} speaking=${speechSynthesis.speaking}`);
+      st(`ok ${new Date().toLocaleTimeString()} pending=${pendingCount()} speaking=${speechSynthesis.speaking}`);
     } catch (e) {
       st('server not reachable: ' + e.message);
       await sleep(500);

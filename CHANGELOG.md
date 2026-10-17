@@ -2,6 +2,44 @@
 
 All notable changes to this project.
 
+## [1.2.14] — 2026-10-17
+
+Self-check of the voice: lost words, broken-off pieces and restarts are fixed
+automatically, without the user noticing or asking.
+
+### Fixed
+
+- **A Windows path ate the rest of the sentence.** The pattern that removes paths from
+  speech ran to the end of the line, spaces included: «Хранить в папке D:\...» lost 219 of
+  256 characters. Now a path ends at its first space (folders with spaces are still
+  removed when another slash follows).
+
+### Added
+
+- **Loss check.** Every message is cleaned twice — normally and with the risky patterns
+  narrowed. If the normal result loses ≥3 Russian words (≥5 %), the soft result is spoken
+  instead, before any sound. Logged as `L`/`LQ` plus a `W loss check` line in `speak.log`.
+- **Re-read of broken-off pieces (Edge engine).** `edge-voice.html` keeps its own queue
+  and hands the browser one piece at a time. A piece that fails or "ends" far too fast for
+  its length (more than 40 characters per second) is re-read from the last spoken word
+  before the next piece starts. Logged as `W edge cut`. Test: `/edge-debug?cutNext=1`,
+  then any message — it breaks off after 3 s and continues from the same word.
+- **Spoken confirmation.** After every automatic watchdog restart the voice says
+  «Озвучка восстановлена.», then continues the interrupted messages.
+
+### Changed
+
+- **Skill `voice-output`:** in replies with tool work the final `speak` goes right after
+  the last tool and carries the whole final text; letters, messages and other
+  ready-to-send texts are read in full wherever they stand (fenced block, quote, plain
+  paragraphs, already sent); «вот что я написал» without the text itself is forbidden.
+- **Edge page reloads itself after a server restart.** A page that was open before the
+  server started gets a one-time `reload` job, so a new `edge-voice.html` takes effect
+  right after Ctrl+Alt+R (`W edge page was open before the server start` in the log).
+
+**Update:** copy `server.js` and `edge-voice.html` from `plugin/mcp/` into the install
+folder, restart the server (Ctrl+Alt+R), and update the skill.
+
 ## [1.2.13] — 2026-10-17
 
 Speech no longer breaks off mid-sentence.
