@@ -2,6 +2,29 @@
 
 All notable changes to this project.
 
+## [1.2.15] — 2026-10-23
+
+Pause of any length, and Ctrl+Alt+R that really revives the voice.
+
+### Fixed
+
+- **Speech died after a long pause (Ctrl+Alt+X).** The pause used
+  `speechSynthesis.pause()`. Svetlana/Dmitry are online voices: the audio streams from
+  Microsoft, and during a long pause (seen: 22 minutes) that stream times out — after
+  "resume" the browser reports speaking, but nothing is heard. Now a pause stops the
+  current piece and puts the rest back at the head of the queue **from the word that was
+  being spoken**; resume starts it fresh. Works for any pause length
+  (`W edge pause: ... chars left` in `speak.log`).
+- **Ctrl+Alt+R did not help with the Edge engine.** It restarted only the old SAPI
+  engine; the hidden Edge window that actually speaks stayed wedged. New endpoint
+  `/edge-restart`: `tts-restart.ps1` now restarts the Edge voice window and waits until
+  the new page polls the server.
+- **Ctrl+Alt+R also un-mutes.** A forgotten Ctrl+Alt+A (volume 0) looks exactly like a
+  broken voice; the restart now always sets the volume back to 100 %.
+
+**Update:** copy `server.js`, `edge-voice.html` and `tts-restart.ps1` from `plugin/mcp/`
+into the install folder, then press Ctrl+Alt+R.
+
 ## [1.2.14] — 2026-10-17
 
 Self-check of the voice: lost words, broken-off pieces and restarts are fixed

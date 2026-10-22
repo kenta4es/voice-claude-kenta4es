@@ -25,6 +25,27 @@ try { Invoke-WebRequest -UseBasicParsing -Uri "$u/stop" -TimeoutSec 4 | Out-Null
 $serverAlive = Test-Server
 L ("server alive before: " + $serverAlive)
 
+# 1b) Edge voices (Svetlana/Dmitry): restart the hidden Edge voice window too.
+# /stop alone does not revive a browser speech engine that got stuck (e.g. after
+# a long pause); a fresh window does. Wait until the new page polls the server.
+if ($serverAlive) {
+    $er = ''
+    try { $er = (Invoke-WebRequest -UseBasicParsing -Uri "$u/edge-restart" -TimeoutSec 8).Content } catch {}
+    L ("edge restart: " + $er)
+    if ($er -eq 'RESTARTING') {
+        $t0 = Get-Date
+        $t0ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $back = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Milliseconds 500
+            try { $es = (Invoke-WebRequest -UseBasicParsing -Uri "$u/edge-state" -TimeoutSec 3).Content } catch { $es = '' }
+            # a poll from the NEW page: "at" later than the restart, voices loaded
+            if ($es -match '"at":(\d+)' -and [int64]$Matches[1] -gt $t0ms + 1000 -and $es -match '"voices":true') { $back = $true; break }
+        }
+        L ("edge back: " + $back + " after " + [int]((Get-Date) - $t0).TotalSeconds + " s")
+    }
+}
+
 if ($serverAlive) {
     # 2a) server is up: kill ONLY the engine child, server.js respawns it in ~1s
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
@@ -67,6 +88,13 @@ try { $pref = ([System.IO.File]::ReadAllText('C:\ClaudeTTS\voice.txt')).Trim() }
 $v = ''
 try { $v = (Invoke-WebRequest -UseBasicParsing -Uri ("$u/voice-set?name=" + $pref) -TimeoutSec 6).Content } catch {}
 L ("voice: " + $v)
+
+# 4b) un-mute: Ctrl+Alt+R always brings the voice back at full volume.
+# A forgotten Ctrl+Alt+A (volume 0) looks exactly like "the voice is broken":
+# the engine keeps speaking silently, and a restart alone does not help.
+$vol = ''
+try { $vol = (Invoke-WebRequest -UseBasicParsing -Uri "$u/volume-set?val=100" -TimeoutSec 4).Content } catch {}
+L ("volume: " + $vol)
 Start-Sleep -Milliseconds 800
 
 # 5) speak confirmation through the server (so it uses the restored voice).

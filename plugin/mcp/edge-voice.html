@@ -54,7 +54,7 @@ function next() {
   u.volume = job.volume == null ? 1 : job.volume;
   let t0 = performance.now(), lastIdx = 0;
   u.onstart = () => { t0 = performance.now(); };
-  u.onboundary = (e) => { if (e.charIndex > lastIdx) lastIdx = e.charIndex; };
+  u.onboundary = (e) => { if (e.charIndex > lastIdx) { lastIdx = e.charIndex; item.lastIdx = lastIdx; } };
   const finish = (err) => {
     if (cur !== item) return;          // stopped meanwhile
     cur = null;
@@ -88,9 +88,23 @@ function handle(job) {
   } else if (job.type === 'stop') {
     queue.length = 0; cur = null; paused = false; speechSynthesis.cancel();
   } else if (job.type === 'pause') {
-    speechSynthesis.pause(); paused = true;
+    // No speechSynthesis.pause(): the online voices stream audio from Microsoft, and
+    // during a long pause that stream times out - resume() then stays silent and only
+    // a restart helped. Instead: stop the current piece, put the rest of it back at
+    // the head of the queue from the word that was being spoken, and wait.
+    paused = true;
+    if (cur) {
+      const item = cur; cur = null;
+      const from = item.lastIdx || 0;
+      const rest = item.text.slice(from).trim();
+      if (rest) queue.unshift({ text: rest, job: item.job, retried: item.retried });
+      speechSynthesis.cancel();
+      report('pause', 0, item.text.length, rest.length);
+    }
   } else if (job.type === 'resume') {
-    speechSynthesis.resume(); paused = false; next();
+    paused = false;
+    if (speechSynthesis.paused) speechSynthesis.resume();
+    next();
   } else if (job.type === 'debug') {
     window.__silentDmitry = !!job.silentDmitry;
     if (job.cutNext) cutNext = true;

@@ -754,7 +754,8 @@ const httpServer = http.createServer(async (req, res) => {
   // The Edge page reports a piece that broke off early and is being re-read (log only).
   if (req.method === 'GET' && req.url.startsWith('/edge/report')) {
     const q = new URL(req.url, 'http://127.0.0.1').searchParams;
-    wdLog(`edge cut: ${q.get('why')} after ${q.get('sec')}s, piece ${q.get('len')} chars -> re-reading last ${q.get('rest')} chars`);
+    if (q.get('why') === 'pause') wdLog(`edge pause: piece ${q.get('len')} chars, resume from the current word, ${q.get('rest')} chars left`);
+    else wdLog(`edge cut: ${q.get('why')} after ${q.get('sec')}s, piece ${q.get('len')} chars -> re-reading last ${q.get('rest')} chars`);
     res.end('OK');
     return;
   }
@@ -804,6 +805,9 @@ const httpServer = http.createServer(async (req, res) => {
     // Test hook: /edge-debug?silentDmitry=1 makes Dmitry speak at volume 0 (watchdog test).
     // /edge-debug?cutNext=1 breaks off the next piece after 2 s (re-read test).
     case '/edge-debug':   edgePush({ type: 'debug', silentDmitry: qp.get('silentDmitry') === '1', cutNext: qp.get('cutNext') === '1' }); result = 'OK'; break;
+    // Ctrl+Alt+R (tts-restart.ps1): a full restart of the hidden Edge voice window, so a
+    // wedged browser speech engine is replaced, not just told to stop.
+    case '/edge-restart': if (EDGE_EXE && useEdge()) { edgeJobs.length = 0; await launchEdgeVoice('manual restart (Ctrl+Alt+R)'); result = 'RESTARTING'; } else result = 'NO_EDGE'; break;
     case '/edge-state':   result = JSON.stringify({ useEdge: useEdge(), alive: edgeAlive(), ...edgeStatus, lastSignalAgoMs: Date.now() - lastEdgeSignal }); break;
     case '/usage':        result = JSON.stringify({ ...usage, warnAt: USAGE_WARN, limit: USAGE_LIMIT }); break;
     case '/ping':         result = await sendCmd('PING', 1500); break;
